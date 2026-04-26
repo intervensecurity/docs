@@ -1,0 +1,130 @@
+---
+title: MCP (Model Context Protocol)
+description: Drop-in scanning for Claude Desktop, Cursor, Cline, and any MCP-aware AI client.
+---
+
+The Model Context Protocol is the emerging standard for connecting LLMs to
+tools. Interven ships an MCP server that any MCP-aware client (Claude Desktop,
+Cursor, Cline, OpenAI Agents SDK, custom MCP hosts) can wire up to scan tool
+calls through Interven before they execute.
+
+## Install
+
+You don't install long-term — your MCP client launches it on demand via `npx`:
+
+```json
+{
+  "mcpServers": {
+    "interven": {
+      "command": "npx",
+      "args": ["-y", "@interven/mcp-guard"],
+      "env": {
+        "INTERVEN_API_KEY": "iv_live_..."
+      }
+    }
+  }
+}
+```
+
+Drop this block into your client's MCP config. Locations:
+
+| Client | Config file |
+|--------|-------------|
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `%APPDATA%\Claude\claude_desktop_config.json` (Windows) |
+| Cursor | Settings → MCP → Add Server |
+| Cline | Settings → MCP → Add Server |
+| OpenAI Agents SDK | `mcp_servers=[{...}]` in your agent config |
+
+Restart the client. Your LLM now has access to two new tools: `interven_scan`
+and `interven_scan_response`.
+
+## Recommended system prompt
+
+For the LLM to actually call `interven_scan` before invoking other tools, tell
+it to. Add this to your system prompt (or per-conversation instructions):
+
+```
+Before invoking ANY tool from a non-Interven MCP server that touches
+external systems (Slack, Drive, GitHub, Salesforce, HubSpot, internal
+HTTP endpoints), first call interven_scan with the intended tool name,
+URL, method, and body. If the decision is DENY, refuse. If SANITIZE,
+use the sanitized_body from the response instead of the original args.
+If REQUIRE_APPROVAL, pause and tell the user an analyst must approve
+at the Console URL Interven returns. Only proceed on ALLOW.
+```
+
+## How the decisions flow
+
+```
+LLM plans tool call
+  → calls interven_scan(tool_name, url, method, body)
+    → mcp-guard server hits POST /v1/scan on Interven
+      → Interven evaluates policy + risk
+        ← returns decision + reason codes + (sanitized_body | approval_id)
+  → LLM acts on the decision:
+      ALLOW            → invokes the original tool
+      SANITIZE         → invokes with sanitized_body
+      DENY             → refuses, cites reasons
+      REQUIRE_APPROVAL → pauses, surfaces approval URL to the user
+```
+
+After approval, re-calling `interven_scan` with the same args within 10
+minutes auto-ALLOWs (recent-approval-grant short-circuit).
+
+## Optional config
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `INTERVEN_API_KEY` | _required_ | Sign up at [app.intervensecurity.com/signup](https://app.intervensecurity.com/signup) |
+| `INTERVEN_GATEWAY_URL` | `https://api.intervensecurity.com` | Self-hosted Interven |
+| `INTERVEN_SCAN_TIMEOUT_MS` | `30000` | Per-scan timeout |
+
+## Read→write exfil detection
+
+After your LLM successfully reads a sensitive resource (a Drive doc, a
+customer record), have it call `interven_scan_response` with the
+`trace_id` from the original `interven_scan` call and the response body.
+This:
+
+- Records what content the agent actually saw (forensics)
+- Feeds correlation rules that flag subsequent writes containing overlapping
+  content (read→write exfil chain)
+
+```python
+# Pseudocode for an MCP client that auto-feeds responses back
+result = mcp.call_tool("interven_scan", {...})
+if result.decision == "ALLOW":
+    response = upstream_tool.invoke(...)
+    mcp.call_tool("interven_scan_response", {
+        "trace_id": result.trace_id,
+        "response_body": response,
+    })
+```
+
+## Limitations of v0.1
+
+- **Opt-in by the LLM.** v0.1 relies on the LLM to call `interven_scan`
+  before invoking tools. A jailbroken or non-cooperative LLM can skip the
+  check. v0.2 ships proxy mode where mcp-guard fronts other MCP servers
+  and intercepts every call regardless.
+- **Only scans tools that have explicit URLs.** If your agent runs raw
+  shell commands or in-process functions, scan-by-MCP isn't the right
+  abstraction — use the OpenClaw plugin or the LangChain/CrewAI adapters.
+
+## Self-hosting
+
+Point at your own Interven instance:
+
+```json
+"env": {
+  "INTERVEN_API_KEY": "iv_live_...",
+  "INTERVEN_GATEWAY_URL": "https://interven.your-company.internal"
+}
+```
+
+The npm package is unchanged — only the gateway destination differs.
+
+## Source
+
+- npm: [`@interven/mcp-guard`](https://www.npmjs.com/package/@interven/mcp-guard)
+- Repo: [github.com/intervensecurity/interven-mcp-guard](https://github.com/intervensecurity/interven-mcp-guard)

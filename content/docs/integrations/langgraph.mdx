@@ -1,0 +1,128 @@
+---
+title: LangGraph
+description: Native scanning for LangGraph agents — works with create_react_agent, ToolNode, and custom StateGraphs.
+---
+
+LangGraph is built on top of LangChain's callback infrastructure, so the same
+`InterventCallback` works for both. We also ship LangGraph-specific helpers
+for the patterns the bare callback can't reach (custom nodes, drop-in tool-node
+replacement, compiled-graph guards).
+
+## Install
+
+```bash
+pip install 'interven-langchain[langgraph]'
+```
+
+The `[langgraph]` extra pulls LangGraph alongside the LangChain core deps.
+Drop it if you only use LangChain.
+
+## 1. Prebuilt agents — `create_react_agent`
+
+The simplest case. Pass the callback in `config={"callbacks": [...]}`:
+
+```python
+from langgraph.prebuilt import create_react_agent
+from interven_langchain import InterventCallback
+
+agent = create_react_agent(model, tools)
+cb = InterventCallback(api_key="iv_live_...", on_block="return_message")
+
+agent.invoke(
+    {"messages": [HumanMessage(content="Post 'standup at 10' to #dev-team")]},
+    config={"callbacks": [cb]},
+)
+```
+
+`on_block="return_message"` returns a refusal string to the LLM so it can
+replan without that tool's result — better UX for chat agents than raising.
+
+## 2. Custom graphs — `interven_tool_node`
+
+Drop-in replacement for `langgraph.prebuilt.ToolNode`. Every tool invocation
+inside the node is scanned, no `config`-threading required:
+
+```python
+from langgraph.graph import StateGraph
+from interven_langchain.langgraph import interven_tool_node
+
+graph = StateGraph(AgentState)
+graph.add_node("agent", call_agent)
+graph.add_node(
+    "tools",
+    interven_tool_node(my_tools, api_key="iv_live_...", on_block="return_message"),
+)
+```
+
+## 3. Compiled-graph guard — `guard_state_graph`
+
+Bolt the callback onto an already-compiled graph. Use this when you build the
+graph yourself but don't want to thread callbacks through every entry point:
+
+```python
+from interven_langchain.langgraph import guard_state_graph
+
+graph = builder.compile()
+guarded = guard_state_graph(graph, api_key="iv_live_...")
+
+guarded.invoke({"messages": [HumanMessage(...)]})
+guarded.stream({"messages": [HumanMessage(...)]})
+```
+
+Wraps `invoke`, `ainvoke`, `stream`, and `astream`. Forwards every other method
+to the underlying compiled graph.
+
+## 4. Custom tool-execution loop — `scan_tool_call`
+
+When you write your own tool-execution node and don't use `ToolNode`:
+
+```python
+from interven_langchain.langgraph import scan_tool_call
+
+def call_tool(state: AgentState) -> AgentState:
+    tool_call = state["messages"][-1].tool_calls[0]
+    decision = scan_tool_call(
+        tool_name=tool_call["name"],
+        args=tool_call["args"],
+        api_key="iv_live_...",
+    )
+    if decision.is_blocked:
+        return {"messages": [ToolMessage(
+            content=f"Blocked: {', '.join(decision.reason_codes)}",
+            tool_call_id=tool_call["id"],
+        )]}
+    args = decision.sanitized_body if decision.decision == "SANITIZE" else tool_call["args"]
+    result = TOOL_REGISTRY[tool_call["name"]].invoke(args)
+    return {"messages": [ToolMessage(content=result, tool_call_id=tool_call["id"])]}
+```
+
+`scan_tool_call` returns a `ScanDecision` with:
+
+- `decision` — `"ALLOW" | "DENY" | "SANITIZE" | "REQUIRE_APPROVAL"`
+- `should_run` — `True` for ALLOW + SANITIZE
+- `is_blocked` — `True` for DENY + REQUIRE_APPROVAL
+- `sanitized_body` — when `decision == "SANITIZE"`, the redacted payload to use
+- `reason_codes`, `risk_score`, `risk_band`, `trace_id`, `approval_id`
+
+## How blocked calls behave
+
+- **`on_block="raise"`** (default): raises `InterventBlockedError` and stops the
+  graph. Stops execution cleanly, preserves the conversation state up to the
+  block.
+- **`on_block="return_message"`**: surfaces a refusal string back to the LLM
+  through the callback's `on_tool_end`. The agent can re-plan without that
+  tool's result. Recommended for chat-style agents.
+
+## Runtime tag
+
+Every scan record from a LangGraph integration is tagged `runtime_type=langgraph`
+in the activity feed, so you can filter for LangGraph traffic separately from
+plain LangChain (`langchain`), CrewAI (`crewai`), OpenAI Assistants
+(`openai_assistants`), and OpenClaw (`openclaw`).
+
+## Examples
+
+Working code lives in the SDK repo:
+
+- [langgraph_react_agent.py](https://github.com/intervensecurity/interven-python/blob/main/sdk-langchain/examples/langgraph_react_agent.py) — `create_react_agent` with `InterventCallback`
+- [langgraph_custom_graph.py](https://github.com/intervensecurity/interven-python/blob/main/sdk-langchain/examples/langgraph_custom_graph.py) — custom `StateGraph` with `interven_tool_node` + `guard_state_graph`
