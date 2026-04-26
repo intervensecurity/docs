@@ -1,0 +1,12 @@
+{
+  "title": "Docs",
+  "pages": [
+    "index",
+    "quickstart",
+    "concepts",
+    "integrations",
+    "policies",
+    "api-reference",
+    "self-host"
+  ]
+}

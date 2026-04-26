@@ -1,0 +1,98 @@
+---
+title: API reference
+description: Endpoints, auth, error codes for direct HTTP integration.
+---
+
+Base URL: `https://api.intervensecurity.com`
+
+## Auth
+
+All public endpoints accept a Bearer API key:
+
+```
+Authorization: Bearer iv_live_<your_key>
+```
+
+Mint API keys at [app.intervensecurity.com/api-keys](https://app.intervensecurity.com/api-keys).
+Keys are shown **once** at creation — store immediately in your secrets manager.
+
+## POST /v1/scan
+
+Evaluate a single outbound API call.
+
+### Request
+
+```json
+{
+  "method": "POST",
+  "url": "https://hooks.slack.com/services/T../B../secret",
+  "headers": { "Content-Type": "application/json" },
+  "body": { "text": "hello" },
+  "agent_id": "00000000-0000-0000-0000-000000000123",
+  "runtime_type": "langchain"
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `method` | string | yes | HTTP verb the agent intends |
+| `url` | string | yes | Absolute URL |
+| `body` | any | no | Request body (object, array, string) |
+| `headers` | object | no | Outbound request headers |
+| `agent_id` | UUID | no | Override the API key's default agent |
+| `runtime_type` | string | no | langchain, crewai, openai_assistants, openclaw, custom |
+
+### Response
+
+```json
+{
+  "decision": "ALLOW",
+  "risk_score": 0.12,
+  "risk_band": "LOW",
+  "reason_codes": [],
+  "trace_id": "f1e2d3c4-..."
+}
+```
+
+When `decision === "SANITIZE"`, the response also includes `sanitized_body` — forward
+THAT instead of the original body. When `decision === "REQUIRE_APPROVAL"`, the response
+includes `approval_id` — poll `/v1/approvals/[id]/status` until the analyst decides.
+
+## POST /v1/scan/response
+
+Classify the response body of an upstream call. Used for forensics and read→write exfil
+detection.
+
+```json
+{
+  "trace_id": "<from /v1/scan>",
+  "response_body": <string or object>,
+  "response_status": 200
+}
+```
+
+Response: `{ data_classes, fields_redacted_count, content_fingerprint }`.
+
+## GET /v1/approvals/[approval_id]/status
+
+Poll for approval status while the analyst decides.
+
+```json
+{ "status": "approved" }   // or "pending" | "denied" | "expired"
+```
+
+## Error codes
+
+| Status | Meaning |
+|--------|---------|
+| `400` | Bad request — body validation failed |
+| `401` | Bearer token missing/invalid/revoked |
+| `413` | Request body exceeded `MAX_BODY_BYTES` (default 256KB) |
+| `429` | Per-tenant rate limit exceeded |
+| `5xx` | Gateway issue — SDKs retry once on 5xx automatically |
+
+## Limits
+
+- Body size: 256 KB per request (`MAX_BODY_BYTES`)
+- Replay window: 60 seconds (`REPLAY_WINDOW_SEC`)
+- Default rate: 60 scans / minute / tenant — contact us to raise

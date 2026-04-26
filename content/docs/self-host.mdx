@@ -1,0 +1,69 @@
+---
+title: Self-hosting
+description: Run Interven on your own infrastructure (single-VPS docker-compose).
+---
+
+Most customers use the hosted SaaS at `https://api.intervensecurity.com`. If you need
+to keep traffic on-prem (regulated environment, air-gapped deploy, or you just want
+control), the same stack runs on a single VPS via docker-compose.
+
+## Stack
+
+- **Gateway** (Fastify, port 4000)
+- **Telemetry** (Fastify, port 4100, internal-only)
+- **Console** (Express + React, port 3100)
+- **Postgres** — Neon hosted or local
+- **Redis** — Upstash or local (only used for rate limiting; optional)
+
+## Quick start
+
+```bash
+git clone https://github.com/intervensecurity/aif
+cd aif
+cp .env.example .env
+# fill in DATABASE_URL, AIF_CONSOLE_SECRET, INTERVEN_API_KEYS_ADMIN_SECRET, etc.
+
+# apply migrations
+DATABASE_URL=$(grep ^DATABASE_URL= .env | cut -d= -f2-) ./infra/fly/apply-migrations.sh
+
+# start the stack
+./infra/scripts/rolling-deploy.sh
+```
+
+## Required env vars
+
+| Var | Purpose |
+|-----|---------|
+| `DATABASE_URL` | Postgres connection string |
+| `REDIS_URL` | Optional. Falls back to in-memory rate limiting |
+| `AIF_CONSOLE_SECRET` | 32+ char hex, JWT signing key (must match across telemetry + console) |
+| `ADMIN_USER` / `ADMIN_PASS` | First-login bootstrap for the console |
+| `INTERVEN_API_KEYS_ADMIN_SECRET` | Bearer for the admin `/v1/keys` endpoint |
+| `INTERVEN_INTERNAL_SECRET` | Service-to-service auth between console / gateway / telemetry |
+| `INTERVEN_CREDENTIAL_ENCRYPTION_KEY` | 64-char hex, encrypts tool credentials at rest |
+
+Generate any 32-char secret with `openssl rand -hex 32`. The credential encryption key
+needs `openssl rand -hex 32` too (32 bytes = 64 hex chars).
+
+## TLS + custom domain
+
+Interven doesn't terminate TLS itself — point Cloudflare Tunnel (or any reverse proxy)
+at `localhost:4000` for the gateway and `localhost:3100` for the console.
+
+## Rolling deploy
+
+```bash
+./infra/scripts/rolling-deploy.sh                # build + sequential restart
+./infra/scripts/rolling-deploy.sh --no-build     # restart only
+./infra/scripts/rolling-deploy.sh gateway        # only redeploy gateway
+```
+
+Each service is health-gated; the script aborts if any service fails to come up
+within 200 seconds.
+
+## Backups
+
+Postgres is the only stateful component. Use whatever backup mechanism your DB
+provider gives you (Neon point-in-time, RDS snapshots, `pg_dump` cron). Tool
+credentials are AES-256-GCM encrypted with `INTERVEN_CREDENTIAL_ENCRYPTION_KEY` —
+keep that key in a secrets manager and back it up separately from the DB.

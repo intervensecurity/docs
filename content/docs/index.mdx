@@ -1,0 +1,44 @@
+---
+title: What is Interven?
+description: Inline policy + risk firewall for AI agent tool calls.
+---
+
+Interven sits between your AI agents and the upstream APIs they call (Slack, GitHub,
+Salesforce, Jira, Workday, etc.). Every governed call is **normalized**, **classified**
+for secrets and PII, run through **policy** and **risk** signals, and gets one of four
+outcomes:
+
+| Decision | Meaning |
+|----------|---------|
+| **ALLOW** | Forward to the real API. |
+| **DENY** | Block with a structured error; raise an incident if needed. |
+| **REQUIRE_APPROVAL** | Pause, surface to a human analyst in the Console, then continue in the same conversation turn once approved. |
+| **SANITIZE** | Redact sensitive fields, then forward (or return the redacted body). |
+
+## Why teams use Interven
+
+- **Drop-in for any framework.** LangChain, CrewAI, OpenAI Assistants, OpenClaw, or
+  the raw `/v1/scan` HTTP API. Five lines of code per integration.
+- **Human-in-the-loop on writes.** When the agent wants to do something sensitive,
+  it pauses; an analyst clicks Approve in the Console; the agent finishes — same
+  turn, no retry needed.
+- **Built-in DLP.** PII, SECRETS, and INTERNAL data classifiers fire before the
+  payload leaves your network.
+- **Per-tenant credential vault.** Agents call Slack, GitHub, Drive, Jira through
+  Interven using only an `iv_live_*` API key. Real OAuth tokens never reach the
+  agent runtime.
+- **Policy you can actually write.** Match by tool, operation, data class, body
+  content, or external principal. Edit in a wizard or as raw JSON.
+
+## Get started
+
+<Cards>
+  <Card title="Quickstart — first scan in 5 lines" href="/docs/quickstart" />
+  <Card title="Pick your framework" href="/docs/integrations/langchain" />
+  <Card title="Concepts" href="/docs/concepts" />
+</Cards>
+
+## Beta access
+
+Interven is in private beta. To request access, email **founder@intervensecurity.com**
+or join the [community Slack](https://intervensecurity.com/slack).

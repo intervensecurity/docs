@@ -1,0 +1,50 @@
+---
+title: OpenAI Assistants
+description: Scan tool_calls before the assistant executes them.
+---
+
+OpenAI's Assistants API surfaces `tool_calls` that you decide whether to execute. Pass
+that list through `scan_tool_calls()` first.
+
+```python
+from openai import OpenAI
+from interven_openai_assistants import scan_tool_calls
+
+oai = OpenAI()
+run = oai.beta.threads.runs.create_and_poll(thread_id=thread.id, assistant_id=asst.id)
+
+if run.status == "requires_action":
+    tool_calls = run.required_action.submit_tool_outputs.tool_calls
+    scanned = scan_tool_calls(tool_calls, api_key="iv_live_...")
+
+    outputs = []
+    for sc in scanned:
+        if sc.allowed:
+            result = execute_tool(sc.name, sc.arguments)
+            outputs.append({"tool_call_id": sc.tool_call_id, "output": result})
+        else:
+            outputs.append({"tool_call_id": sc.tool_call_id, "output": "[blocked by Interven]"})
+
+    oai.beta.threads.runs.submit_tool_outputs(
+        thread_id=thread.id, run_id=run.id, tool_outputs=outputs,
+    )
+```
+
+## How tool URLs are inferred
+
+`scan_tool_calls()` looks at the function name to guess the upstream URL:
+
+| Function name pattern | Inferred tool |
+|----------------------|---------------|
+| `slack_*`, `post_slack`, etc. | slack |
+| `github_*`, `gh_*` | github |
+| `gdrive_*`, `drive_*` | gdrive |
+| `fetch_*`, `http_*` | generic HTTP |
+
+For anything else, pass an explicit `url_resolver` callable.
+
+## Install
+
+```bash
+pip install interven-openai-assistants
+```

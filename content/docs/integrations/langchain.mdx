@@ -1,0 +1,49 @@
+---
+title: LangChain
+description: Wrap your LangChain tools or attach an Interven callback handler.
+---
+
+Two ways to use Interven with LangChain — pick whichever fits your code.
+
+## Option A — wrap individual tools
+
+```python
+from interven_langchain import guard
+from langchain.tools import StructuredTool
+
+raw_tool = StructuredTool.from_function(send_email, name="send_email")
+guarded = guard(raw_tool, api_key="iv_live_...")
+
+agent.invoke({"input": "..."}, tools=[guarded])
+```
+
+Every `_run` invocation is scanned before executing. DENY raises `InterventBlockedError`.
+SANITIZE rewrites the input arguments to the redacted version.
+
+## Option B — global callback
+
+```python
+from langchain_core.runnables import RunnableConfig
+from interven_langchain import InterventCallback
+
+cb = InterventCallback(api_key="iv_live_...", on_block="raise")
+agent.invoke(prompt, config=RunnableConfig(callbacks=[cb]))
+```
+
+Hooks `on_tool_start` for every tool the chain invokes. Lighter touch, no per-tool
+wrapping.
+
+## Modes for blocked calls
+
+```python
+InterventCallback(api_key=..., on_block="raise")           # raises an exception
+InterventCallback(api_key=..., on_block="return_message")  # returns "[blocked]" to the LLM
+```
+
+## Install
+
+```bash
+pip install interven-langchain
+```
+
+The package depends on `interven` (the base SDK) and `langchain-core>=0.2`.

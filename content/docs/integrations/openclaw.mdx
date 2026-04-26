@@ -1,0 +1,77 @@
+---
+title: OpenClaw
+description: Install the openclaw-interven-guard plugin from ClawHub — no code changes.
+---
+
+Interven ships an OpenClaw plugin that hooks `before_tool_call` for every tool call
+your agent makes. Once installed and configured with an API key, every guarded tool
+gets scanned through Interven automatically.
+
+## Install
+
+```bash
+openclaw plugins install clawhub:openclaw-interven-guard
+```
+
+## Configure
+
+Edit `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-interven-guard": {
+        "config": {
+          "apiKey": "iv_live_...",
+          "gatewayUrl": "https://api.intervensecurity.com",
+          "scanTimeoutMs": 30000,
+          "approvalWaitSec": 180,
+          "guardAllTools": true,
+          "failClosedOnTimeout": false
+        }
+      }
+    }
+  }
+}
+```
+
+| Option | Default | Notes |
+|--------|---------|-------|
+| `apiKey` | _required_ | Your `iv_live_*` API key |
+| `gatewayUrl` | `https://api.intervensecurity.com` | Override only if self-hosting |
+| `scanTimeoutMs` | `15000` | Per-scan timeout. First scan can take longer; bump to 30000 |
+| `approvalWaitSec` | `180` | How long the plugin waits on REQUIRE_APPROVAL before giving up |
+| `guardAllTools` | `true` | Scan every tool, not just web_fetch/exec/etc. |
+| `failClosedOnTimeout` | `false` | Block on scan timeout. Off = UX-friendly, On = safety-first |
+
+Restart the OpenClaw gateway:
+
+```bash
+openclaw gateway restart
+# or, if running manually:
+nohup openclaw gateway > ~/.openclaw/gateway.log 2>&1 &
+```
+
+## What happens at runtime
+
+1. Your agent invokes a tool (curl, web_fetch, message, etc.)
+2. The plugin's `before_tool_call` hook intercepts the call
+3. Plugin POSTs the request body to `/v1/scan`
+4. Decision returned:
+   - **ALLOW** → tool runs as usual
+   - **DENY** → tool is blocked, agent gets a message explaining why
+   - **SANITIZE** → tool runs with redacted arguments
+   - **REQUIRE_APPROVAL** → plugin polls for up to `approvalWaitSec`, then resumes if approved
+
+## Common gotchas
+
+- Reinstalling/upgrading the plugin **wipes the `config` block** in `openclaw.json`.
+  Save your apiKey before running `plugins uninstall`.
+- First scan from a brand-new agent can exceed the default 15s timeout.
+  Set `scanTimeoutMs: 30000`.
+- Plugin v0.3.3+ retries on transient 5xx errors. Earlier versions failed open
+  immediately — upgrade if you see phantom approvals.
+
+See the [full integration guide](https://github.com/intervensecurity/aif/blob/main/docs/INTEGRATE-OPENCLAW.md)
+for the 11 documented setup gotchas from real customer deploys.

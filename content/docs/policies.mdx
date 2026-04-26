@@ -1,0 +1,76 @@
+---
+title: Policies
+description: Rules that gate agent tool calls — match by tool, operation, data class, body content.
+---
+
+## Anatomy of a policy
+
+A policy has a **name** and one or more **rules**. Each rule has a `match`, a
+`condition`, an `action`, and a `priority`. The first matching rule wins (lowest
+priority number = evaluated first), but **strictness escalates**: a DENY rule
+takes precedence over an ALLOW rule on the same scan.
+
+```json
+{
+  "name": "Block Slack posts of internal documents",
+  "rules": [
+    {
+      "rule_id": "internal-doc-block",
+      "priority": 10,
+      "match": {
+        "tool_name": "slack",
+        "operations": ["post_message"]
+      },
+      "condition": {
+        "body_contains_any": ["internal only", "do not share", "deal #"]
+      },
+      "action": "DENY"
+    }
+  ]
+}
+```
+
+## Available match keys
+
+| Key | Type | Example |
+|-----|------|---------|
+| `tool_name` | string | `"jira"`, `"slack"`, `"salesforce"`, `"hubspot"` |
+| `operations` | string[] | `["create_issue"]`, `["*"]`, `["method:POST"]`, `["category:issues"]` |
+| `verbs` | string[] | `["WRITE", "ADMIN"]` |
+| `org_patterns` | string[] | `["acme/*"]` (GitHub) |
+| `repo_patterns` | string[] | `["my-org/secrets-*"]` |
+| `channel_patterns` | string[] | `["#alerts*"]` (Slack) |
+
+## Available conditions
+
+| Condition | Type | Use case |
+|-----------|------|----------|
+| `is_external_principal` | bool | Catch posts to a personal/external Slack |
+| `has_data_class` | string[] | `["SECRETS"]`, `["PII"]`, `["INTERNAL"]` |
+| `body_contains_any` | string[] | Body has ANY of these substrings (case-insensitive) |
+| `body_contains_all` | string[] | Body has EVERY substring |
+| `new_resource` | bool | First time the agent has touched this resource |
+| `volume_burst` | bool | Sudden spike in calls |
+
+## Editing in the Console
+
+The Console supports two edit modes:
+
+1. **Form mode** — point and click for the common case (one tool + simple condition + action).
+2. **Raw JSON mode** — full control: multiple rules per policy, body-contains, custom priority,
+   sanitize_fields. Click **Edit** on a policy → switch to **Raw JSON** tab.
+
+## Default ship-with policies
+
+When you sign up, your tenant gets these starter rules. Edit or disable any of them.
+
+| Name | Tool | Action |
+|------|------|--------|
+| P3: Deny Slack Secret Egress | slack | DENY when SECRETS detected |
+| P4: Deny Slack Secret Upload | slack | DENY when SECRETS detected |
+| P5: Sanitize Slack PII Egress | slack | SANITIZE PII before posting |
+| P8: Deny Google Drive External Sharing | gdrive | DENY share_file_external |
+| P9: Sanitize Google Drive PII Export | gdrive | SANITIZE on PII export |
+| P1/P2: GitHub external collaborator + PR review | github | DENY / REQUIRE_APPROVAL |
+| P6: Require Approval for IAM User Creation | aws | REQUIRE_APPROVAL |
+| P7: Deny AWS Admin Policy Attachment | aws | DENY |

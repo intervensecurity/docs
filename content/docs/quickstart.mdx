@@ -1,0 +1,84 @@
+---
+title: Quickstart
+description: Send your first scan request to Interven in 5 lines.
+---
+
+This page assumes you already have an `iv_live_*` API key — get one by signing up at
+[app.intervensecurity.com/signup](https://app.intervensecurity.com/signup).
+
+## 1. Install the SDK
+
+```bash
+# Python
+pip install interven
+
+# TypeScript / Node
+npm install @interven/sdk
+```
+
+## 2. Send your first scan
+
+```python
+from interven import Client
+
+client = Client(api_key="iv_live_...")
+result = client.scan(
+    method="POST",
+    url="https://hooks.slack.com/services/T../B../secret",
+    body={"text": "hello from my agent"},
+)
+print(result.decision)  # ALLOW | DENY | SANITIZE | REQUIRE_APPROVAL
+```
+
+That's it. The same call from TypeScript:
+
+```ts
+import { Client } from '@interven/sdk';
+
+const client = new Client({ apiKey: 'iv_live_...' });
+const result = await client.scan({
+  method: 'POST',
+  url: 'https://hooks.slack.com/services/T../B../secret',
+  body: { text: 'hello from my agent' },
+});
+console.log(result.decision);
+```
+
+## 3. Handle the four decisions
+
+```python
+match result.decision:
+    case "ALLOW":
+        # forward the original body to the upstream API
+        send_to_slack(result.body_to_forward)
+    case "SANITIZE":
+        # body is already redacted — forward the sanitized version
+        send_to_slack(result.sanitized_body)
+    case "DENY":
+        # log + drop. The reason codes tell you why.
+        log("blocked", result.reason_codes)
+    case "REQUIRE_APPROVAL":
+        # agent should pause; analyst will approve in Console.
+        # Re-call scan() once they do, and you'll get ALLOW.
+        wait_for_approval(result.approval_id)
+```
+
+## 4. (Optional) Scan response bodies too
+
+When the agent reads sensitive content (e.g., an internal Drive doc), POST the
+upstream's response body back to `/v1/scan/response` so Interven records what
+the agent actually saw — useful for forensics and read→write exfil detection.
+
+```python
+client.scan_response(
+    trace_id=result.trace_id,
+    response_body=upstream_response_text,
+    response_status=200,
+)
+```
+
+## What's next
+
+- Pick an [integration guide](/docs/integrations/langchain) for your agent framework
+- Configure [policies](/docs/policies) so the gateway makes the right decisions
+- Browse the [API reference](/docs/api-reference) for every endpoint and field

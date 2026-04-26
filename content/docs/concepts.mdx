@@ -1,0 +1,61 @@
+---
+title: Concepts
+description: Mental model — agents, tools, scans, policies, approvals, decisions.
+---
+
+## Agent
+
+An identity in Interven that represents a process making outbound API calls. Each agent
+has a `runtime_type` (langchain, crewai, openai_assistants, openclaw, custom) and
+either an HMAC shared secret (for `/invoke`) or an `iv_live_*` API key (for `/v1/scan`).
+
+## Tool
+
+A destination service the agent calls — Slack, GitHub, Salesforce, Jira, etc. Interven
+ships built-in normalizers for the common ones; you can register additional tools via
+the **Tools** page in the Console.
+
+## Operation
+
+The semantic action within a tool: `post_message`, `create_issue`, `share_file_external`,
+`update_contact`. Operations are derived from the request URL + method + body so policy
+authors can target specific actions.
+
+## Scan
+
+One outbound API call evaluated by Interven. Inputs: tool, operation, request body,
+identity context. Outputs: a **decision** + reason codes + risk score.
+
+## Decision
+
+| Decision | What you do | Typical trigger |
+|----------|-------------|-----------------|
+| **ALLOW** | Send the original request to the upstream | Clean call, baseline behavior |
+| **SANITIZE** | Send the redacted body returned by Interven | PII or low-severity secrets in egress |
+| **DENY** | Drop the call, log it | Hard policy violation, secret exfil, threat-intel match |
+| **REQUIRE_APPROVAL** | Pause until the human analyst decides | First-time write to a new destination, body matches sensitive markers, etc. |
+
+## Policy
+
+A rule that tells the gateway when to ALLOW / DENY / SANITIZE / REQUIRE_APPROVAL.
+Match by tool, operation, verb (READ/WRITE/ADMIN), data class (PII/SECRETS/INTERNAL),
+external principal, or **body-content substrings**. See [Policies](/docs/policies).
+
+## Approval
+
+When a scan returns REQUIRE_APPROVAL, the gateway creates an approval record. The agent
+(via SDK or plugin) polls until an analyst approves or denies in the Console. On
+approve, the next identical scan within 10 minutes auto-ALLOWs (recent approval grant)
+and the agent completes the task in the same conversation turn.
+
+## Trust score
+
+A 0–1 score per agent, updated continuously based on approvals, denies, and threat
+matches. Higher trust → fewer signals → fewer false-positives. Brand new agents start
+at 0.5.
+
+## Risk score
+
+Combined value (0–1) for a single scan, weighted across deterministic signals
+(`new_destination`, `sensitive_data_egress`, `external_principal`, etc.). Exposed
+in the activity feed for forensic review.

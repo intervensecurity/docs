@@ -1,0 +1,36 @@
+---
+title: CrewAI
+description: Drop-in tool wrapper for CrewAI agents.
+---
+
+```python
+from crewai_tools import BaseTool
+from interven_crewai import guard
+
+raw_tool = MySalesforceTool()
+guarded = guard(raw_tool, api_key="iv_live_...")
+
+crew = Crew(
+    agents=[my_agent],
+    tasks=[task],
+    tools=[guarded],
+)
+```
+
+`guard()` wraps the tool's `_run` method. Every CrewAI invocation goes through
+Interven before reaching the upstream.
+
+## Install
+
+```bash
+pip install interven-crewai
+```
+
+Depends on `interven` + `crewai>=0.36`.
+
+## Behavior
+
+- ALLOW → tool runs normally with the original arguments
+- DENY → raises `InterventBlockedError`
+- SANITIZE → tool runs with redacted arguments
+- REQUIRE_APPROVAL → blocks until analyst approves; returns the upstream result on resume

@@ -1,0 +1,13 @@
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/* Slight palette tilt to match the Interven console (indigo accent). */
+:root {
+  --color-fd-primary: 79 70 229;       /* indigo-600 */
+  --color-fd-primary-foreground: 255 255 255;
+}
+
+.dark {
+  --color-fd-primary: 129 140 248;     /* indigo-400 */
+  --color-fd-primary-foreground: 17 24 39;
+}
