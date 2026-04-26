@@ -1,13 +1,27 @@
+/* Tailwind v4: a single import gives us the engine + reset.
+   Must come BEFORE the fumadocs preset so its @theme / @source / @plugin
+   directives have somewhere to register against. */
+@import 'tailwindcss';
+
+/* Tell Tailwind v4 where to scan for utility-class usage. The fumadocs preset's
+   own @source already covers fumadocs-ui's bundled JS; these lines cover our
+   own app + content + (defensively) the fumadocs UI dist in case the preset
+   path resolution fails on Cloudflare. */
+@source '../app/**/*.{ts,tsx}';
+@source '../content/**/*.mdx';
+@source '../node_modules/fumadocs-ui/dist/**/*.js';
+
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
 
-/* Slight palette tilt to match the Interven console (indigo accent). */
+/* Slight palette tilt to match the Interven console (indigo accent).
+   Tailwind v4 stores colors as oklch(); the fumadocs vars use the same. */
 :root {
-  --color-fd-primary: 79 70 229;       /* indigo-600 */
-  --color-fd-primary-foreground: 255 255 255;
+  --color-fd-primary: oklch(58% 0.226 277);   /* indigo-600 */
+  --color-fd-primary-foreground: oklch(100% 0 0);
 }
 
 .dark {
-  --color-fd-primary: 129 140 248;     /* indigo-400 */
-  --color-fd-primary-foreground: 17 24 39;
+  --color-fd-primary: oklch(72% 0.16 277);    /* indigo-400 */
+  --color-fd-primary-foreground: oklch(20% 0.04 260);
 }
