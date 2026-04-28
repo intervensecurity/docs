@@ -1,0 +1,290 @@
+---
+title: Fintech Quickstart
+description: Reference architecture for putting Interven in front of LangGraph agents in regulated financial workflows — SOC 2, PCI, GLBA-aligned.
+---
+
+This guide is for fintech engineering teams building production AI agents
+for back-office work — KYC review, transaction monitoring, customer support,
+loan underwriting, compliance summarization, internal account lookups —
+who need policy enforcement and audit evidence that survives a SOC 2 / PCI
+audit.
+
+It assumes you've already integrated [LangGraph](/docs/integrations/langgraph)
+or are about to.
+
+## What you're getting
+
+Interven sits in the tool-call path of your LangGraph agents:
+
+```
+LangGraph agent
+   ↓ (every tool call)
+Interven scan API
+   ↓ (decision: ALLOW / DENY / SANITIZE / REQUIRE_APPROVAL)
+   → real Slack / Salesforce / Jira / internal API
+```
+
+Out of the box you get:
+
+- **Inline policy enforcement** — block agent calls that match deny rules,
+  redact PII before it leaves your VPC, route money-movement actions to a
+  human via Slack approve/deny buttons.
+- **Audit trail of every decision** — exportable to Splunk HEC, Datadog Logs,
+  or flat CSV. SOC 2 evidence by design.
+- **Per-API-key IP allowlist** — production keys pinned to your VPC NAT range,
+  rejected at the edge if used elsewhere.
+- **Tenant data retention** — automatic prune of decision history after 30 /
+  90 / 365 days per your written retention policy.
+- **Read-only Auditor role** — your compliance reviewer logs in, pulls evidence,
+  cannot accidentally mutate state during the audit.
+
+## Reference architecture (production)
+
+```
+┌─────────────────────────────┐    ┌──────────────────────────┐
+│  Your VPC                   │    │  Your SIEM               │
+│                             │    │  (Splunk / Datadog /     │
+│  ┌──────────────┐           │    │   self-hosted ELK)       │
+│  │ LangGraph    │           │    │                          │
+│  │ agent        │           │    └──────────▲───────────────┘
+│  │ (your code)  │           │               │
+│  └──────┬───────┘           │               │ Daily NDJSON export
+│         │ HTTPS              │               │ via /v1/decisions/export
+│         │ Bearer iv_live_*  │               │ (cron job, auditor RBAC role)
+│         │                    │               │
+│         ▼                    │               │
+│  ┌──────────────┐  scan +   │  ┌──────────────────────────┐
+│  │ Interven     ├───────────┼─►│ Interven SaaS            │
+│  │ /v1/scan     │  decision │  │ api.intervensecurity.com │
+│  └──────┬───────┘           │  │                          │
+│         │ ALLOW / SANITIZE  │  │  - policy + risk engine  │
+│         ▼                    │  │  - encrypted vault       │
+│  ┌──────────────┐           │  │  - approval workflow     │
+│  │ Real upstream│           │  │  - SIEM export           │
+│  │ (Salesforce, │           │  └──────────────────────────┘
+│  │  Slack, ...) │           │
+│  └──────────────┘           │
+└─────────────────────────────┘
+                         │
+                         │ REQUIRE_APPROVAL: Slack channel webhook
+                         ▼
+                  ┌──────────────────┐
+                  │ #risk-approvals  │
+                  │ Slack channel    │
+                  │ (Approve / Deny  │
+                  │  buttons)        │
+                  └──────────────────┘
+```
+
+## Step-by-step
+
+### 1. Sign up + mint a production API key with IP allowlist
+
+```bash
+# Find your VPC NAT egress IP — your agents call out from this CIDR.
+# Example values; substitute your real range.
+VPC_CIDR="203.0.113.0/24"
+
+# In the Console (https://app.intervensecurity.com/api-keys):
+#   - Click "Mint API Key"
+#   - Name: "production-langgraph"
+#   - IP allowlist: $VPC_CIDR
+#   - Save the iv_live_... once.
+```
+
+If a leaked key gets used from outside the allowlisted range, the gateway
+returns HTTP 403 before even hitting the policy engine. The blocked attempt
+counter shows up next to the key on the API Keys page.
+
+### 2. Wire LangGraph through Interven
+
+Install:
+
+```bash
+pip install 'interven-langchain[langgraph,langsmith]'
+```
+
+In your agent code:
+
+```python
+from langgraph.prebuilt import create_react_agent
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
+from interven_langchain import InterventCallback
+
+agent = create_react_agent(
+    ChatOpenAI(model="gpt-4o", temperature=0),
+    tools=[approve_disbursement, lookup_account, post_to_slack],
+)
+
+cb = InterventCallback(
+    api_key=os.environ["INTERVEN_API_KEY"],
+    on_block="raise",   # in fintech, prefer hard-stop on DENY
+    runtime_type="langgraph",
+)
+
+result = agent.invoke(
+    {"messages": [HumanMessage("Approve disbursement #4821 for $14,500.")]},
+    config={"callbacks": [cb]},
+)
+```
+
+Every tool call now scans through Interven first.
+
+### 3. Set up policies for the most common fintech risks
+
+These three policies cover ~80% of fintech back-office threat models. Add
+them via the Console (Policies → Create Policy → JSON tab):
+
+#### a. Block any outbound message containing PII or secrets
+
+```json
+{
+  "name": "P1: Block PII/secret egress to messaging tools",
+  "rules": [{
+    "match": { "tool_name": "slack", "operations": ["post_message"] },
+    "condition": { "has_data_class": ["PII", "SECRETS"] },
+    "action": "DENY",
+    "priority": 10
+  }]
+}
+```
+
+#### b. Require human approval for money movement above a threshold
+
+```json
+{
+  "name": "P2: Approval for high-value disbursements",
+  "rules": [{
+    "match": {
+      "tool_name": "custom_proxy",
+      "operations": ["create_disbursement", "transfer_funds", "approve_payout"]
+    },
+    "condition": {
+      "body_contains_any": ["amount", "principal", "disbursement_amount"]
+    },
+    "action": "REQUIRE_APPROVAL",
+    "priority": 20
+  }]
+}
+```
+
+The reviewer sees the request as a Slack card with **Approve** / **Deny**
+buttons. The agent pauses, the reviewer decides, the agent completes the
+task in the same conversation turn.
+
+#### c. Mark INTERNAL content from Drive / Confluence as non-egressable
+
+```json
+{
+  "name": "P3: Block egress of internal docs flagged as confidential",
+  "rules": [{
+    "match": { "tool_name": "slack", "operations": ["post_message"] },
+    "condition": { "has_data_class": ["INTERNAL"] },
+    "action": "SANITIZE",
+    "priority": 30
+  }]
+}
+```
+
+The INTERNAL classifier matches "internal only", "do not share", "confidential",
+"NDA required", "proprietary", etc. — the markers your finance team already
+puts on sensitive memos.
+
+### 4. Connect Slack for approvals + alerts
+
+1. Create a Slack app at https://api.slack.com/apps
+2. Enable **Incoming Webhooks** → add to your `#risk-approvals` channel
+3. Enable **Interactivity & Shortcuts** → set the Request URL to
+   `https://api.intervensecurity.com/v1/slack/interactions`
+4. Copy the **Signing Secret** from Basic Information
+5. In the Interven Console (Alerts → Add Slack channel):
+   - Webhook URL: the incoming webhook from step 2
+   - Signing secret: from step 4
+   - Events: REQUIRE_APPROVAL + DENY + INCIDENT
+   - Min risk: HIGH (or any — your call)
+6. Click **Test** — a test card lands in Slack with Approve/Deny buttons
+
+When the agent triggers REQUIRE_APPROVAL, the on-call risk reviewer gets
+the card in Slack, clicks Approve, and the agent finishes the task. No
+context-switching to a separate dashboard.
+
+### 5. Set retention to your written policy
+
+Settings → Audit Log → **Log Retention Period**:
+
+| Choose | When |
+|--------|------|
+| 30 days | EU GDPR-strict tenants where the auditor wants minimum data |
+| 90 days | SOC 2 default minimum |
+| 365 days | PCI DSS Type 2 review windows |
+| Unlimited | When your written policy is "indefinite, manual prune" |
+
+Save. The retention prune job runs daily and deletes events / completed
+approvals older than the window for your tenant. `retention_last_pruned_at`
+on the tenant row records when it last ran (visible to admin via Settings).
+
+### 6. Set up the auditor user
+
+When your SOC 2 / PCI auditor needs read-only access:
+
+1. Settings → Team Management → **Invite User**
+2. Email: their email
+3. Role: **Auditor (read-only, for SOC 2 reviewers)**
+4. Send them the temporary password
+
+What the auditor sees:
+- ✅ Activity, Decisions, Traces, Approvals (history), Incidents, Policies, Agents, Tools
+- ✅ Audit Log section with **Compliance evidence export** card (date range + 5 formats)
+- ❌ NO Tool Credentials, NO API Keys, NO Alerts in sidebar
+- ❌ Every mutation endpoint returns 403
+
+The auditor pulls evidence themselves; you don't have to manually export and email files.
+
+### 7. Wire the SIEM export into your daily cron
+
+If you'd rather pull decisions into your SIEM continuously instead of having
+the auditor pull manually:
+
+```bash
+#!/bin/bash
+# /etc/cron.daily/interven-decisions-export.sh
+# Runs as a service account with an Auditor-role API session cookie.
+
+YESTERDAY=$(date -u -d 'yesterday' +%Y-%m-%dT00:00:00Z)
+TODAY=$(date -u +%Y-%m-%dT00:00:00Z)
+
+curl -sS -b "/etc/interven/auditor-session.cookie" \
+  "https://app.intervensecurity.com/api/telemetry/decisions/export?format=splunk&since=${YESTERDAY}&until=${TODAY}" \
+  | curl -sS -X POST "https://splunk.your-corp.internal:8088/services/collector/event" \
+      -H "Authorization: Splunk ${SPLUNK_HEC_TOKEN}" \
+      --data-binary @-
+```
+
+For Datadog, swap `format=splunk` → `format=datadog` and POST to your DD intake URL.
+
+## What you DON'T need to do (yet)
+
+- **Self-host Interven** — the SaaS at `api.intervensecurity.com` is
+  multi-tenant with AES-256-GCM at rest, dedicated RBAC, and SOC 2-aligned
+  controls. Self-hosted is supported (`infra/docker-compose.prod.yml`) but
+  not required for most fintech buyers in 2026.
+- **Custom IAM / SAML SSO** — currently username/password + per-user role.
+  SAML SSO ships in v0.5.
+
+## What to ask procurement / your CISO before scaling
+
+These are the usual fintech-CISO due-diligence questions. Honest answers:
+
+| Question | Today |
+|----------|-------|
+| Where is decision data stored? | Neon Postgres (Frankfurt + Virginia) — pin region in your contract |
+| Are webhook URLs / API tokens encrypted? | Yes. AES-256-GCM, single-tenant key |
+| Audit log immutability? | append-only inserts; deletes only via the retention prune job (logged) |
+| SOC 2 attestation? | In progress (target: Q3 2026) |
+| Right-to-deletion for EU tenants? | Yes — set retention to 30 days OR submit a DELETE request |
+| SLA? | Best-effort during beta; 99.5% in v1.0 |
+| Data residency control? | EU-only deploy roadmapped for v0.5 |
+
+If any of these are blockers, [email founder@intervensecurity.com](mailto:founder@intervensecurity.com)
+and we'll work it out — fintech design partners get priority on roadmap items.

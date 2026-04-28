@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "quickstart",
+    "fintech-quickstart",
     "concepts",
     "integrations",
     "policies",
