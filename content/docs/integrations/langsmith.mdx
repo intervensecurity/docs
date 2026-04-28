@@ -1,0 +1,111 @@
+---
+title: LangSmith
+description: Every Interven scan emits a LangSmith run/span — see security decisions inline with your agent traces.
+---
+
+If your team uses LangSmith for LangChain / LangGraph observability, Interven
+plugs straight in. Every scan decision (ALLOW / DENY / SANITIZE / REQUIRE_APPROVAL)
+becomes a child run under the agent / chain / tool that triggered it. Your
+compliance reviewer or on-call engineer sees policy decisions in the same
+trace tree they already use — no second dashboard.
+
+## Install
+
+```bash
+pip install 'interven-langchain[langsmith]'
+```
+
+The `[langsmith]` extra adds the `langsmith` package as a dep. The integration
+auto-activates whenever `langsmith` is importable AND your process has the
+standard LangSmith env vars set:
+
+```bash
+export LANGSMITH_API_KEY=ls_...
+export LANGSMITH_TRACING=true
+export LANGSMITH_PROJECT=your-project   # optional
+```
+
+If those env vars aren't present, the integration silently no-ops — no
+LangSmith calls happen. You're not forced into LangSmith just because you
+installed the extra.
+
+## What the spans look like
+
+Each Interven scan appears as a `tool` run named `interven.scan.<tool_name>`,
+nested under whatever LangChain run triggered it:
+
+```
+agent_executor (root)
+├── llm_call
+├── tool: send_slack_message
+│   └── interven.scan.send_slack_message     ← Interven decision lives here
+│       └── decision: SANITIZE
+│           risk_band: MED
+│           reason_codes: [PII_EGRESS, SENSITIVE_DATA_EGRESS]
+│           interven.console_url: https://app.intervensecurity.com/activity?trace_id=...
+└── llm_call
+```
+
+## Tags applied to every Interven run
+
+These are searchable in LangSmith filters:
+
+| Tag | Example |
+|-----|---------|
+| `interven.decision.<lower>` | `interven.decision.deny` |
+| `interven.risk.<lower>` | `interven.risk.high` |
+| `interven.runtime.<lower>` | `interven.runtime.langchain`, `interven.runtime.langgraph` |
+| `interven.reason.<lower>` | `interven.reason.body_pattern_match`, `interven.reason.external_principal` (up to 5) |
+
+## Output shape
+
+```json
+{
+  "decision": "REQUIRE_APPROVAL",
+  "risk_score": 0.71,
+  "risk_band": "HIGH",
+  "reason_codes": ["NEW_DESTINATION", "BODY_PATTERN_MATCH"],
+  "trace_id": "9f2c-...",
+  "approval_id": "a4b1-...",
+  "approval_url": "https://app.intervensecurity.com/approvals/a4b1-..."
+}
+```
+
+When the decision is DENY or REQUIRE_APPROVAL, the LangSmith run is also
+marked as errored so you can spot it instantly in the trace UI's red-bordered
+node count.
+
+## Bodies are NOT logged
+
+We deliberately do **not** include the request body in the LangSmith inputs —
+bodies may carry PII or secrets, and LangSmith stores inputs verbatim. The
+full payload lives in Interven's encrypted store and is reachable via the
+`interven.console_url` metadata link from the LangSmith run. This keeps
+LangSmith free of regulated content.
+
+## Using with LangGraph
+
+The same emission happens whether you're using `InterventCallback`,
+`interven_tool_node`, `guard_state_graph`, or `scan_tool_call` — every code
+path goes through the same emit helper.
+
+```python
+from langgraph.prebuilt import create_react_agent
+from interven_langchain import InterventCallback
+
+agent = create_react_agent(model, tools=tools)
+agent.invoke(
+    {"messages": [HumanMessage("...")]},
+    config={"callbacks": [InterventCallback(api_key="iv_live_...")]},
+)
+# LangSmith now shows interven.scan child runs under each tool call.
+```
+
+## Why this matters
+
+If your audit team uses LangSmith to investigate an incident, they don't
+have to learn a second tool to see policy enforcement. Every "what did the
+agent try, what did the firewall do, why" question gets answered in the
+same trace they're already looking at. That's the difference between a
+security tool that ships data and one that integrates with how your team
+actually works.

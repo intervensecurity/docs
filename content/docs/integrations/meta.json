@@ -1,4 +1,4 @@
 {
   "title": "Integrations",
-  "pages": ["langgraph", "langchain", "crewai", "openai-assistants", "openclaw", "mcp"]
+  "pages": ["langgraph", "langchain", "langsmith", "crewai", "openai-assistants", "openclaw", "mcp"]
 }
