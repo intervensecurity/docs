@@ -1,0 +1,118 @@
+---
+title: JavaScript / TypeScript
+description: Interven JS/TS SDK — guard, gate, and IntervenClient for Node.js agents.
+---
+
+The `@interven/sdk-js` package provides three integration patterns, from
+one-liner to full client.
+
+## Install
+
+```bash
+npm install @interven/sdk-js
+```
+
+## Option 1 — `guard` decorator (recommended)
+
+Wraps any async function so it's scanned before execution:
+
+```ts
+import { guard } from '@interven/sdk-js';
+
+const safeSendEmail = guard(sendEmail, {
+  apiKey: 'iv_live_...',
+  tool: 'sendgrid',
+  operation: 'send_email',
+});
+
+// Throws GuardBlockedError if denied
+const result = await safeSendEmail({ to: 'user@example.com', body: '...' });
+```
+
+## Option 2 — `gate` one-liner
+
+Scan a request and get the decision — you handle the forwarding:
+
+```ts
+import { gate } from '@interven/sdk-js';
+
+const result = await gate('POST', 'https://api.github.com/repos/org/repo/pulls', {
+  apiKey: 'iv_live_...',
+  body: { title: 'My PR', head: 'feature', base: 'main' },
+});
+
+if (result.decision === 'ALLOW') {
+  await forwardToGitHub(result.body);
+} else if (result.decision === 'SANITIZE') {
+  await forwardToGitHub(result.sanitizedBody);
+} else if (result.decision === 'DENY') {
+  console.log('Blocked:', result.reasonCodes);
+}
+```
+
+## Option 3 — `IntervenClient`
+
+Full client with scan, scan_response, and wait_for_approval:
+
+```ts
+import { IntervenClient } from '@interven/sdk-js';
+
+const client = new IntervenClient({ apiKey: 'iv_live_...' });
+
+// Scan a tool call
+const scan = await client.scan({
+  method: 'POST',
+  url: 'https://hooks.slack.com/services/T00/B00/xxx',
+  body: { text: 'Customer SSN 478-23-9156' },
+});
+
+// Handle REQUIRE_APPROVAL with blocking wait
+if (scan.decision === 'REQUIRE_APPROVAL') {
+  const final = await client.waitForApproval(scan.approval_id!, {
+    timeoutMs: 300_000, // 5 minutes
+  });
+  console.log('Approved:', final.status);
+}
+
+// Scan response bodies for exfil correlation
+await client.scanResponse({
+  traceId: scan.trace_id!,
+  responseBody: upstreamResponse,
+  responseStatus: 200,
+});
+```
+
+## Error Handling
+
+```ts
+import { GuardBlockedError, AuthenticationError } from '@interven/sdk-js';
+
+try {
+  await safeSendEmail(args);
+} catch (err) {
+  if (err instanceof GuardBlockedError) {
+    console.log('Blocked by policy:', err.reasonCodes);
+  }
+}
+```
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `INTERVEN_API_KEY` | API key (used if not passed in constructor) |
+| `INTERVEN_GATEWAY_URL` | Override cloud endpoint |
+
+## TypeScript Types
+
+All types are exported:
+
+```ts
+import type {
+  Decision,
+  RiskBand,
+  ScanResponse,
+  GateResult,
+  IntervenClientOptions,
+} from '@interven/sdk-js';
+```

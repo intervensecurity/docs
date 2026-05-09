@@ -1,22 +1,49 @@
 ---
 title: Quickstart
-description: Send your first scan request to Interven in 5 lines.
+description: Protect your AI agent's tool calls in under 2 minutes.
 ---
 
 This page assumes you already have an `iv_live_*` API key — get one by signing up at
 [app.intervensecurity.com/signup](https://app.intervensecurity.com/signup).
 
-## 1. Install the SDK
+## Option A — Gateway CLI (zero code changes)
+
+The fastest path. One command, instant protection:
+
+```bash
+npx @interven/gateway --api-key iv_live_YOUR_KEY
+```
+
+Then point your agent's tool calls through the local proxy:
+
+```bash
+# Instead of:  POST https://api.github.com/repos/org/repo/pulls
+# Route via:   POST http://localhost:4100/proxy/https://api.github.com/repos/org/repo/pulls
+
+curl -X POST http://localhost:4100/proxy/https://api.github.com/repos/org/repo/pulls \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ghp_..." \
+  -d '{"title":"My PR","head":"feature","base":"main"}'
+```
+
+Open `http://localhost:4100` for a live dashboard. See the
+[Gateway CLI guide](/docs/integrations/gateway-cli) for details.
+
+---
+
+## Option B — SDK integration (5 lines)
+
+### 1. Install
 
 ```bash
 # Python
 pip install interven
 
 # TypeScript / Node
-npm install @interven/sdk
+npm install @interven/sdk-js
 ```
 
-## 2. Send your first scan
+### 2. Send your first scan
 
 ```python
 from interven import Client
@@ -30,12 +57,12 @@ result = client.scan(
 print(result.decision)  # ALLOW | DENY | SANITIZE | REQUIRE_APPROVAL
 ```
 
-That's it. The same call from TypeScript:
+The same call in TypeScript:
 
 ```ts
-import { Client } from '@interven/sdk';
+import { IntervenClient } from '@interven/sdk-js';
 
-const client = new Client({ apiKey: 'iv_live_...' });
+const client = new IntervenClient({ apiKey: 'iv_live_...' });
 const result = await client.scan({
   method: 'POST',
   url: 'https://hooks.slack.com/services/T../B../secret',
@@ -44,30 +71,49 @@ const result = await client.scan({
 console.log(result.decision);
 ```
 
-## 3. Handle the four decisions
+### 3. Handle the four decisions
 
 ```python
 match result.decision:
     case "ALLOW":
-        # forward the original body to the upstream API
         send_to_slack(result.body_to_forward)
     case "SANITIZE":
-        # body is already redacted — forward the sanitized version
         send_to_slack(result.sanitized_body)
     case "DENY":
-        # log + drop. The reason codes tell you why.
         log("blocked", result.reason_codes)
     case "REQUIRE_APPROVAL":
-        # agent should pause; analyst will approve in Console.
-        # Re-call scan() once they do, and you'll get ALLOW.
-        wait_for_approval(result.approval_id)
+        # SDK handles polling — blocks until analyst decides
+        final = client.wait_for_approval(result.approval_id, timeout=300)
+        if final.status == "approved":
+            send_to_slack(result.body_to_forward)
 ```
 
-## 4. (Optional) Scan response bodies too
+### 4. One-liner alternatives
 
-When the agent reads sensitive content (e.g., an internal Drive doc), POST the
-upstream's response body back to `/v1/scan/response` so Interven records what
-the agent actually saw — useful for forensics and read→write exfil detection.
+For the simplest integration, use `guard` (decorator) or `gate` (function):
+
+```python
+from interven import guard
+
+@guard(api_key="iv_live_...", tool="slack", operation="post_message")
+def send_slack_message(channel, text):
+    requests.post("https://slack.com/api/chat.postMessage", json={"channel": channel, "text": text})
+
+send_slack_message("#general", "hello")  # scanned automatically
+```
+
+```python
+from interven import gate
+
+result = gate("POST", "https://api.github.com/repos/org/repo/pulls", body={...}, api_key="iv_live_...")
+if result.decision == "ALLOW":
+    forward(result.body)
+```
+
+### 5. (Optional) Scan response bodies
+
+When the agent reads sensitive content, scan the response for
+forensics and read-then-write exfiltration detection:
 
 ```python
 client.scan_response(
@@ -79,6 +125,9 @@ client.scan_response(
 
 ## What's next
 
-- Pick an [integration guide](/docs/integrations/langchain) for your agent framework
-- Configure [policies](/docs/policies) so the gateway makes the right decisions
-- Browse the [API reference](/docs/api-reference) for every endpoint and field
+- [Gateway CLI](/docs/integrations/gateway-cli) — zero-code proxy setup
+- [MCP Guard](/docs/integrations/mcp) — scan MCP tool calls in Claude Desktop, Cursor, Cline
+- [LangChain](/docs/integrations/langchain) · [JS/TS SDK](/docs/integrations/javascript) — framework integrations
+- [Supported tools](/docs/tools) — 30+ built-in tool integrations
+- [Policies](/docs/policies) — configure what gets allowed, denied, or sanitized
+- [API reference](/docs/api-reference) — every endpoint and field

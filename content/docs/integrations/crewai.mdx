@@ -1,36 +1,69 @@
 ---
 title: CrewAI
-description: Drop-in tool wrapper for CrewAI agents.
+description: Scan CrewAI tool calls through Interven using the Python SDK guard decorator.
 ---
 
-```python
-from crewai_tools import BaseTool
-from interven_crewai import guard
-
-raw_tool = MySalesforceTool()
-guarded = guard(raw_tool, api_key="iv_live_...")
-
-crew = Crew(
-    agents=[my_agent],
-    tasks=[task],
-    tools=[guarded],
-)
-```
-
-`guard()` wraps the tool's `_run` method. Every CrewAI invocation goes through
-Interven before reaching the upstream.
+Use the base Interven Python SDK to guard CrewAI tool calls. The `guard`
+decorator wraps any function so it's scanned before execution.
 
 ## Install
 
 ```bash
-pip install interven-crewai
+pip install interven
 ```
 
-Depends on `interven` + `crewai>=0.36`.
+## Guard a CrewAI tool
+
+```python
+from crewai_tools import BaseTool
+from interven import guard
+
+class MySalesforceTool(BaseTool):
+    name = "salesforce_query"
+    description = "Query Salesforce records"
+
+    @guard(api_key="iv_live_...", tool="salesforce", operation="query")
+    def _run(self, query: str) -> str:
+        # Your Salesforce logic here
+        return salesforce_client.query(query)
+
+crew = Crew(
+    agents=[my_agent],
+    tasks=[task],
+    tools=[MySalesforceTool()],
+)
+```
+
+## Alternative — scan manually with `gate`
+
+For more control, use `gate` inside your tool:
+
+```python
+from interven import gate
+
+class MySlackTool(BaseTool):
+    name = "slack_post"
+    description = "Post a message to Slack"
+
+    def _run(self, channel: str, text: str) -> str:
+        result = gate(
+            "POST",
+            "https://slack.com/api/chat.postMessage",
+            body={"channel": channel, "text": text},
+            api_key="iv_live_...",
+        )
+        if result.decision == "DENY":
+            return f"Blocked: {result.reason_codes}"
+        if result.decision == "SANITIZE":
+            text = result.sanitized_body["text"]
+        return slack_client.post_message(channel, text)
+```
 
 ## Behavior
 
-- ALLOW → tool runs normally with the original arguments
-- DENY → raises `InterventBlockedError`
-- SANITIZE → tool runs with redacted arguments
-- REQUIRE_APPROVAL → blocks until analyst approves; returns the upstream result on resume
+| Decision | CrewAI behavior |
+|----------|----------------|
+| **ALLOW** | Tool runs normally |
+| **DENY** | `guard` raises `InterventBlockedError`; `gate` returns the decision for you to handle |
+| **SANITIZE** | `guard` rewrites arguments with redacted values; tool runs with clean data |
+| **REQUIRE_APPROVAL** | `guard` blocks until analyst approves in the Console |

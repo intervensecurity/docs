@@ -1,0 +1,105 @@
+---
+title: Supported Tools
+description: 30+ built-in tool integrations with automatic URL routing and operation detection.
+---
+
+Interven ships with built-in support for 30+ SaaS tools. Each integration
+includes URL-based routing (so the gateway automatically detects which tool
+is being called), operation normalization, and pre-configured risk signals.
+
+## Built-in Tools
+
+### Developer & DevOps
+
+| Tool | Operations | Example URLs |
+|------|-----------|--------------|
+| **GitHub** | list_prs, create_pr, merge_pr, add_collaborator, get_contents, create_issue, ... | `api.github.com/repos/*/pulls` |
+| **GitLab** | list_mrs, create_mr, merge_mr, add_member, ... | `gitlab.com/api/v4/projects/*/merge_requests` |
+| **Linear** | create_issue, update_issue, list_issues, ... | `api.linear.app/graphql` |
+| **Jira** | create_issue, transition_issue, add_comment, ... | `*.atlassian.net/rest/api/*/issue` |
+| **Datadog** | create_monitor, mute_monitor, post_event, ... | `api.datadoghq.com/api/v1/*` |
+| **PagerDuty** | create_incident, acknowledge, resolve, ... | `api.pagerduty.com/incidents` |
+
+### Communication
+
+| Tool | Operations | Example URLs |
+|------|-----------|--------------|
+| **Slack** | post_message, upload_file, update_message, invite_user, ... | `slack.com/api/chat.postMessage` |
+| **Discord** | send_message, create_channel, add_role, ban_member, ... | `discord.com/api/v*/channels/*/messages` |
+| **Microsoft Teams** | send_message, create_channel, add_member, ... | `graph.microsoft.com/v1.0/teams/*` |
+| **SendGrid** | send_email, create_template, add_contact, ... | `api.sendgrid.com/v3/mail/send` |
+| **Twilio** | send_sms, make_call, create_conversation, ... | `api.twilio.com/2010-04-01/Accounts/*/Messages` |
+
+### CRM & Sales
+
+| Tool | Operations | Example URLs |
+|------|-----------|--------------|
+| **Salesforce** | create_record, update_record, query, delete_record, ... | `*.salesforce.com/services/data/v*/sobjects/*` |
+| **HubSpot** | create_contact, update_deal, search, create_engagement, ... | `api.hubapi.com/crm/v3/objects/*` |
+| **Zendesk** | create_ticket, update_ticket, add_comment, ... | `*.zendesk.com/api/v2/tickets` |
+| **Intercom** | create_conversation, reply, tag_contact, ... | `api.intercom.io/conversations` |
+
+### Productivity & Docs
+
+| Tool | Operations | Example URLs |
+|------|-----------|--------------|
+| **Google Drive** | share_file, upload, create_permission, ... | `www.googleapis.com/drive/v3/files/*` |
+| **Notion** | create_page, update_page, append_block, search, ... | `api.notion.com/v1/pages` |
+| **Confluence** | create_page, update_page, add_comment, ... | `*.atlassian.net/wiki/rest/api/content` |
+| **Dropbox** | upload, share, move, create_folder, ... | `api.dropboxapi.com/2/files/*` |
+| **Box** | upload, share, collaborate, create_folder, ... | `api.box.com/2.0/files/*` |
+| **Asana** | create_task, update_task, add_comment, ... | `app.asana.com/api/1.0/tasks` |
+| **Monday** | create_item, update_item, create_board, ... | `api.monday.com/v2` |
+
+### Cloud & Infrastructure
+
+| Tool | Operations | Example URLs |
+|------|-----------|--------------|
+| **AWS** | attach_policy, create_user, s3_put_object, ... | `*.amazonaws.com/*` |
+| **Supabase** | insert, update, delete, rpc, ... | `*.supabase.co/rest/v1/*` |
+| **Firebase** | set_document, update_document, delete_document, ... | `firestore.googleapis.com/v1/*` |
+| **Cloudflare** | create_record, update_rule, purge_cache, ... | `api.cloudflare.com/client/v4/*` |
+| **Vercel** | create_deployment, create_project, add_domain, ... | `api.vercel.com/v*/deployments` |
+| **Netlify** | create_deploy, create_site, update_site, ... | `api.netlify.com/api/v1/sites` |
+
+### AI & ML
+
+| Tool | Operations | Example URLs |
+|------|-----------|--------------|
+| **OpenAI** | create_completion, create_embedding, create_fine_tune, ... | `api.openai.com/v1/chat/completions` |
+| **Anthropic** | create_message, count_tokens, ... | `api.anthropic.com/v1/messages` |
+
+### Finance
+
+| Tool | Operations | Example URLs |
+|------|-----------|--------------|
+| **Stripe** | create_charge, create_customer, create_refund, ... | `api.stripe.com/v1/charges` |
+
+### HR
+
+| Tool | Operations | Example URLs |
+|------|-----------|--------------|
+| **Workday** | create_worker, update_position, terminate, ... | `*.workday.com/api/*/workers` |
+| **BambooHR** | add_employee, update_employee, request_timeoff, ... | `api.bamboohr.com/api/gateway.php/*` |
+| **Greenhouse** | create_candidate, advance_application, schedule_interview, ... | `harvest.greenhouse.io/v1/candidates` |
+
+## Custom Tools
+
+For tools not in the built-in list, use `custom_proxy` as the tool name in
+your scan request. Interven still runs secret/PII detection and risk scoring.
+
+```python
+result = client.scan(
+    method="POST",
+    url="https://internal-api.mycompany.com/workflow/start",
+    body={"workflow_id": "onboard-user", "data": {...}},
+)
+```
+
+The gateway automatically detects the tool from the URL. If it doesn't match
+any built-in pattern, it's classified as `custom_proxy`.
+
+## Adding Operations via Console
+
+You can add custom operations for any tool in the **Tools** page of the
+Interven Console. These operations appear in policy rules and activity logs.

@@ -40,7 +40,9 @@ Evaluate a single outbound API call.
 | `body` | any | no | Request body (object, array, string) |
 | `headers` | object | no | Outbound request headers |
 | `agent_id` | UUID | no | Override the API key's default agent |
+| `agent_name` | string | no | Human-readable agent name for telemetry |
 | `runtime_type` | string | no | langchain, crewai, openai_assistants, openclaw, custom |
+| `context` | string | no | Conversation context for semantic risk analysis |
 
 ### Response
 
@@ -50,13 +52,29 @@ Evaluate a single outbound API call.
   "risk_score": 0.12,
   "risk_band": "LOW",
   "reason_codes": [],
-  "trace_id": "f1e2d3c4-..."
+  "trace_id": "f1e2d3c4-...",
+  "tool_name": "slack",
+  "operation": "post_message",
+  "classifications": [],
+  "signals": []
 }
 ```
 
-When `decision === "SANITIZE"`, the response also includes `sanitized_body` — forward
-THAT instead of the original body. When `decision === "REQUIRE_APPROVAL"`, the response
-includes `approval_id` — poll `/v1/approvals/[id]/status` until the analyst decides.
+| Field | Present when | Description |
+|-------|-------------|-------------|
+| `decision` | always | `ALLOW`, `DENY`, `SANITIZE`, or `REQUIRE_APPROVAL` |
+| `risk_score` | always | 0.0 – 1.0 |
+| `risk_band` | always | `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
+| `reason_codes` | always | Why the decision was made (e.g. `SECRETS`, `PII`, `EXTERNAL_PRINCIPAL`) |
+| `trace_id` | always | Unique trace ID for telemetry correlation |
+| `tool_name` | always | Detected tool (e.g. `github`, `slack`, `custom_proxy`) |
+| `operation` | always | Detected operation (e.g. `create_pr`, `post_message`) |
+| `classifications` | always | Data classes found (`SECRETS`, `PII`) |
+| `sanitized_body` | `SANITIZE` | Redacted body — forward this instead of the original |
+| `approval_id` | `REQUIRE_APPROVAL` | UUID — poll or use `wait_for_approval()` |
+| `policy_id` | when matched | Policy that triggered the decision |
+| `policy_name` | when matched | Human-readable policy name |
+| `signals` | always | Risk signals that fired (baseline anomaly, threat intel, etc.) |
 
 ## POST /v1/scan/response
 

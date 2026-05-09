@@ -1,0 +1,104 @@
+---
+title: Gateway CLI
+description: One-command proxy that scans every tool call. Zero infrastructure.
+---
+
+The Interven Gateway CLI is the fastest way to protect your agent's tool calls.
+One command, instant proxy with a live dashboard.
+
+## Quick Start
+
+```bash
+npx @interven/gateway --api-key iv_live_YOUR_KEY
+```
+
+The gateway starts on `http://localhost:4100` with a built-in dashboard.
+
+## How It Works
+
+```
+Agent → localhost:4100/proxy/<upstream-url> → Interven Cloud → Decision → Forward or Block
+```
+
+Your agent sends HTTP requests through the local proxy instead of directly to
+upstream APIs. Each request is scanned by Interven's policy and risk engine.
+The proxy then forwards allowed requests, blocks denied ones, and redacts
+sensitive data from sanitized requests.
+
+## Route tool calls through the proxy
+
+Prefix your upstream URL with `http://localhost:4100/proxy/`:
+
+```python
+import requests
+
+# Direct call (unprotected):
+# requests.post("https://api.github.com/repos/org/repo/pulls", json={...})
+
+# Through Interven (protected):
+response = requests.post(
+    "http://localhost:4100/proxy/https://api.github.com/repos/org/repo/pulls",
+    json={"title": "My PR", "head": "feature", "base": "main"},
+    headers={"Authorization": "Bearer ghp_..."}
+)
+```
+
+```ts
+// TypeScript
+const res = await fetch(
+  'http://localhost:4100/proxy/https://api.github.com/repos/org/repo/pulls',
+  {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ghp_...' },
+    body: JSON.stringify({ title: 'My PR', head: 'feature', base: 'main' }),
+  }
+);
+```
+
+## Monitor Mode
+
+Start in monitor mode to log every decision without blocking anything — ideal
+for evaluating Interven before enforcing:
+
+```bash
+npx @interven/gateway --api-key iv_live_YOUR_KEY --mode monitor
+```
+
+All requests are forwarded regardless of the scan result. The dashboard and
+terminal logs show what *would* have been blocked.
+
+## Options
+
+| Flag | Env Var | Default | Description |
+|------|---------|---------|-------------|
+| `--api-key` | `INTERVEN_API_KEY` | — | API key (required) |
+| `--port` | `PORT` | `4100` | Listen port |
+| `--mode` | — | `enforce` | `enforce` or `monitor` |
+| `--gateway-url` | `INTERVEN_GATEWAY_URL` | `https://api.intervensecurity.com` | Cloud endpoint |
+| `--verbose` | — | on | Log decisions to stdout |
+| `--quiet` | — | off | Suppress per-request logs |
+
+## Dashboard
+
+Open `http://localhost:4100` for a live view of scan stats and recent decisions
+with risk scores, tool names, and reason codes.
+
+## Decisions
+
+The proxy handles all four decisions:
+
+| Decision | Proxy behavior |
+|----------|---------------|
+| **ALLOW** | Forward request to upstream, return response |
+| **DENY** | Return `403` with reason codes |
+| **SANITIZE** | Forward redacted body to upstream |
+| **REQUIRE_APPROVAL** | Return `202` with approval ID and console link |
+
+## When to use the CLI vs the SDK
+
+| Scenario | Use |
+|----------|-----|
+| Agent makes raw HTTP calls, can't install SDK | **Gateway CLI** |
+| You want zero code changes | **Gateway CLI** |
+| You want per-tool granularity in code | **SDK** (`guard` / `gate`) |
+| MCP server tool calls | **MCP Guard** |
