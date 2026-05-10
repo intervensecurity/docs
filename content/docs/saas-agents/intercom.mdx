@@ -1,0 +1,51 @@
+---
+title: Intercom Fin
+description: Protect Intercom Fin via Data Connectors pointing at Interven.
+---
+
+# Intercom Fin
+
+Intercom Fin calls external systems via **Data Connectors**. Each connector
+has a URL — point it at Interven.
+
+## Setup
+
+### 1. Create the inbound route in Interven
+
+[Console → Inbound Routes → Add route](https://app.intervensecurity.com/inbound-routes)
+
+- **Path prefix:** `fin-billing`
+- **Upstream URL:** `https://api.your-billing-saas.com/v2`
+- **Upstream headers:**
+  ```
+  Authorization: Bearer your-real-billing-token
+  ```
+
+### 2. Configure Data Connector in Intercom
+
+In Intercom → Settings → Data Connectors → New Data Connector:
+
+- **URL:** `https://api.intervensecurity.com/inbound/fin-billing/customers/{customerId}`
+- **Method:** `GET`
+- **Authentication:** None (Interven adds the real auth)
+- **Variables:** Map `{customerId}` to a Fin conversation attribute
+
+### 3. Use in Procedures
+
+Reference the Data Connector inside a Fin Procedure. Fin invokes it during
+conversations; Interven scans every call.
+
+## Notes
+
+- Data Connectors have a **15-second timeout** (30s for Procedures). Interven
+  adds under 100ms overhead, well within budget.
+- HMAC-SHA256 webhook signatures from Intercom are pass-through — Interven
+  doesn't strip them.
+
+## Limitations
+
+- This covers what **Fin actively does** via Data Connectors. It does not
+  cover Fin's core conversational behavior or knowledge retrieval — those
+  happen inside Intercom's cloud and have no extension point.
+- For knowledge-base content governance, use Intercom's native data
+  classification settings.

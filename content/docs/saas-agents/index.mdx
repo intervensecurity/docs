@@ -1,0 +1,105 @@
+---
+title: SaaS Agent Protection
+description: Protect any SaaS AI agent (Salesforce Agentforce, HubSpot Breeze, Zendesk AI, Intercom Fin) without modifying agent code.
+---
+
+# Protect SaaS AI agents you don't control
+
+Most enterprise AI agents — Salesforce Agentforce, HubSpot Breeze, Zendesk AI,
+Intercom Fin — run inside vendor clouds. You can't inject middleware into the
+agent's runtime. You can't add an SDK. You can't intercept its tool calls.
+
+But you **can** control where it sends its API calls.
+
+## How destination-side proxy works
+
+```
+SaaS Agent (Salesforce, HubSpot, etc.)
+    │
+    │  configured to call Interven URL
+    ▼
+┌──────────────────────────────────────┐
+│  Interven Inbound Gateway            │
+│  https://api.intervensecurity.com/   │
+│         inbound/<your-prefix>/...    │
+│                                      │
+│  1. Match path to route              │
+│  2. Identify calling agent           │
+│  3. Run full policy + risk pipeline  │
+│  4. Decide ALLOW/DENY/SANITIZE/      │
+│       REQUIRE_APPROVAL               │
+│  5. Forward to real upstream with    │
+│     stored credentials               │
+└──────────────────────────────────────┘
+    │
+    │  with real Bearer token
+    ▼
+Real Slack / GitHub / DB / API
+```
+
+The agent never sees the real credential. Interven holds it. The agent calls
+Interven; Interven scans, then forwards.
+
+## Setup (3 steps)
+
+### 1. Create an inbound route
+
+In the [Console → Inbound Routes](https://app.intervensecurity.com/inbound-routes):
+
+- **Path prefix** — short identifier, e.g. `sf-slack`
+- **Upstream URL** — the real API base, e.g. `https://slack.com/api`
+- **Upstream headers** — credentials Interven adds when forwarding:
+  ```
+  Authorization: Bearer xoxb-your-real-slack-token
+  ```
+- **Tool name** (optional) — `slack`, `github`, etc., for policy attribution
+- **Agent identification** — how Interven attributes the call to an agent
+
+### 2. Configure your SaaS agent
+
+Point the SaaS agent at the Interven URL instead of the real API. Specifics
+per platform:
+
+- [Salesforce Agentforce](./salesforce) — Named Credentials + External Services
+- [HubSpot Breeze](./hubspot) — Agent Tool `actionUrl`
+- [Zendesk AI](./zendesk) — Integration Builder
+- [Intercom Fin](./intercom) — Data Connector URL
+
+### 3. Test and monitor
+
+Every call appears in **Activity** with full decision evidence: matched
+policies, risk score, classifications. Set policies in **Policies** to control
+what each agent can do.
+
+## Decision behavior
+
+| Decision | What the SaaS agent sees |
+|----------|--------------------------|
+| **ALLOW** | Real upstream's response, transparently |
+| **DENY** | HTTP 403 with `reason_codes` |
+| **SANITIZE** | Real upstream's response (Interven sent redacted body) |
+| **REQUIRE_APPROVAL** | HTTP 202 with `approval_id`. Retry within 10 min after analyst approves — auto-allowed via `RECENT_APPROVAL_GRANT`. |
+
+## Headers you'll see
+
+Every response from the inbound proxy includes:
+
+- `X-Interven-Decision` — `ALLOW` / `DENY` / `SANITIZE` / `REQUIRE_APPROVAL`
+- `X-Interven-Trace-Id` — UUID for telemetry correlation
+- `X-Interven-Reasons` — comma-separated reason codes (if any)
+
+## Coverage matrix
+
+| Platform | Method | Coverage |
+|----------|--------|----------|
+| Salesforce Agentforce | Named Credentials → Interven URL | Full |
+| HubSpot Breeze | Agent Tool actionUrl → Interven URL | Full |
+| Zendesk AI | Integration Builder URL → Interven URL | Full |
+| Intercom Fin | Data Connector URL → Interven URL | Full |
+| Sierra | Custom API integration → Interven URL | Full |
+| Decagon | API endpoint config → Interven URL | Full |
+| Microsoft Copilot (custom agents) | MCP server URL → Interven URL | Custom agents only |
+| Google Gemini (Vertex agents) | Custom agent endpoint → Interven URL | Custom agents only |
+
+For platforms that don't expose an API endpoint config, use OAuth scope
+restriction + audit log monitoring as a fallback.

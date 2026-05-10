@@ -1,0 +1,123 @@
+---
+title: Salesforce Agentforce
+description: Protect Salesforce Agentforce tool calls via Named Credentials + External Services pointing at Interven.
+---
+
+# Salesforce Agentforce
+
+Salesforce Agentforce calls external APIs through **External Services**, which
+authenticate via **Named Credentials**. Both are configurable — point them at
+Interven to get full enforcement.
+
+## Architecture
+
+```
+Agentforce Action
+    ↓
+External Service (OpenAPI spec)
+    ↓
+Named Credential (URL + auth)
+    ↓
+Interven Inbound Proxy   ← scan happens here
+    ↓
+Real Slack / DB / API
+```
+
+## Setup
+
+### 1. Create the inbound route in Interven
+
+[Console → Inbound Routes → Add route](https://app.intervensecurity.com/inbound-routes)
+
+- **Path prefix:** `sf-slack`
+- **Upstream URL:** `https://slack.com/api`
+- **Upstream headers:**
+  ```
+  Authorization: Bearer xoxb-your-real-slack-token
+  ```
+- **Tool name:** `slack`
+
+The Interven URL becomes:
+```
+https://api.intervensecurity.com/inbound/sf-slack
+```
+
+### 2. Create Named Credential in Salesforce
+
+**Setup → Named Credentials → New**
+
+| Field | Value |
+|-------|-------|
+| Label | Interven (Slack) |
+| Name | `Interven_Slack` |
+| URL | `https://api.intervensecurity.com/inbound/sf-slack` |
+| Identity Type | Anonymous |
+| Authentication Protocol | No Authentication |
+
+Salesforce will not need credentials — Interven adds them on the way out.
+
+### 3. Create External Service
+
+**Setup → External Services → Add an External Service → From OpenAPI Spec**
+
+Paste a minimal OpenAPI 3.0 spec describing the operations Agentforce should
+call. Example for Slack `chat.postMessage`:
+
+```yaml
+openapi: 3.0.0
+info:
+  title: Slack via Interven
+  version: 1.0.0
+servers:
+  - url: https://api.intervensecurity.com/inbound/sf-slack
+paths:
+  /chat.postMessage:
+    post:
+      operationId: postMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel: { type: string }
+                text: { type: string }
+      responses:
+        '200':
+          description: OK
+```
+
+Choose the **Interven_Slack** Named Credential during setup.
+
+### 4. Add the Action to your Agent
+
+**Setup → Agents → Edit your Agentforce agent → Actions → Add Action**
+
+Select the External Service operation (`postMessage`) and add it to your
+agent's available tools.
+
+## Result
+
+When the agent invokes `postMessage`:
+
+1. Salesforce sends the request to the Interven URL via Named Credential
+2. Interven scans the request body for secrets/PII, evaluates policies
+3. ALLOW: Interven adds `Authorization: Bearer xoxb-...` and forwards to Slack
+4. DENY: Interven returns 403; Salesforce surfaces the error
+5. SANITIZE: Interven redacts sensitive fields, then forwards
+6. REQUIRE_APPROVAL: Interven returns 202; analyst approves in Console
+
+## Trust Layer + Interven
+
+Salesforce's **Einstein Trust Layer** governs the LLM interaction (data
+masking, prompt defense, toxicity). Interven governs the **action layer** —
+what the agent actually does with external systems. They're complementary,
+not competing.
+
+## Audit
+
+Every call appears in [Activity](https://app.intervensecurity.com/activity)
+with full decision evidence. Set the agent's identity in Interven (via the
+inbound route's `agent_identification` config) to attribute each call to a
+specific Agentforce agent.

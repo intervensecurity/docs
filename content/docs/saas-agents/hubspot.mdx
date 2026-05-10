@@ -1,0 +1,73 @@
+---
+title: HubSpot Breeze
+description: Protect HubSpot Breeze agent tools via Agent Tool actionUrl pointing at Interven.
+---
+
+# HubSpot Breeze
+
+HubSpot Breeze invokes external workflow actions defined as **Agent Tools**.
+Each tool has an `actionUrl` — point that at Interven.
+
+## Setup
+
+### 1. Create the inbound route in Interven
+
+[Console → Inbound Routes → Add route](https://app.intervensecurity.com/inbound-routes)
+
+- **Path prefix:** `hs-crm-update`
+- **Upstream URL:** `https://your-internal-crm.example.com/api`
+- **Upstream headers:**
+  ```
+  Authorization: Bearer your-real-crm-token
+  X-Internal-Key: your-internal-key
+  ```
+
+### 2. Create Agent Tool in HubSpot
+
+In your HubSpot developer project, define an Agent Tool:
+
+```json
+{
+  "type": "TAKE_ACTION",
+  "name": "update-crm-record",
+  "description": "Update a CRM record with new info",
+  "actionUrl": "https://api.intervensecurity.com/inbound/hs-crm-update/records",
+  "inputFields": [
+    { "name": "recordId", "type": "string" },
+    { "name": "fields", "type": "object" }
+  ]
+}
+```
+
+When Breeze calls this tool, HubSpot POSTs to `actionUrl` with:
+
+```json
+{
+  "callbackId": "abc123",
+  "origin": { "portalId": 12345 },
+  "context": { "userId": 7 },
+  "inputFields": { "recordId": "xyz", "fields": { ... } }
+}
+```
+
+### 3. Map decisions to HubSpot states
+
+Interven's decision affects the response HubSpot expects. The proxy returns
+upstream's response on ALLOW/SANITIZE. For DENY/REQUIRE_APPROVAL, HubSpot
+sees:
+
+| Interven decision | HTTP status | Maps to HubSpot |
+|-------------------|-------------|-----------------|
+| ALLOW | upstream's status | `SUCCESS` |
+| SANITIZE | upstream's status (with redacted body) | `SUCCESS` |
+| DENY | 403 | `FAIL_CONTINUE` |
+| REQUIRE_APPROVAL | 202 + `approval_id` | `BLOCK` (held until callback) |
+
+For `REQUIRE_APPROVAL`, the agent should wait. After analyst approves, the
+agent retries within 10 minutes — Interven auto-allows via
+`RECENT_APPROVAL_GRANT`.
+
+## Why this works
+
+The `actionUrl` is fully customer-controlled. HubSpot doesn't validate where
+it points. You can change it any time without re-publishing the agent.

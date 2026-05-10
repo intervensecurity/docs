@@ -1,0 +1,61 @@
+---
+title: Zendesk AI Agents
+description: Protect Zendesk AI Agents via Integration Builder pointing at Interven.
+---
+
+# Zendesk AI Agents
+
+Zendesk AI Agents invoke external APIs through the no-code **Integration
+Builder** — configure HTTP method, URL, and authorization. Point the URL at
+Interven for full enforcement.
+
+## Setup
+
+### 1. Create the inbound route in Interven
+
+[Console → Inbound Routes → Add route](https://app.intervensecurity.com/inbound-routes)
+
+- **Path prefix:** `zd-orders`
+- **Upstream URL:** `https://your-shop-api.example.com/v1`
+- **Upstream headers:**
+  ```
+  X-API-Key: your-real-shop-api-key
+  ```
+- **Tool name:** `custom_proxy`
+
+### 2. Configure Zendesk Integration Builder
+
+In Zendesk Admin Center → AI Agents → Integration Builder → New integration:
+
+- **Method:** `POST`
+- **URL:** `https://api.intervensecurity.com/inbound/zd-orders/lookup`
+- **Authorization:** None (Interven adds the real key)
+- **Body:**
+  ```json
+  {
+    "orderId": "{{customer.orderId}}"
+  }
+  ```
+
+### 3. Custom Action
+
+Define a Custom Action in your AI Agent flow that invokes this integration.
+The action receives Zendesk's session parameters and forwards them through
+Interven to your real backend.
+
+## Behavior
+
+| Interven decision | Zendesk action result |
+|-------------------|----------------------|
+| ALLOW | Real backend response, AI Agent continues |
+| DENY | 403 — AI Agent shows error message to customer |
+| SANITIZE | Forwards redacted body, customer's PII never reaches backend |
+| REQUIRE_APPROVAL | 202 — AI Agent treats as transient error, customer waits or escalates |
+
+## Use cases
+
+- **PII redaction before backend:** Customer types email/phone in chat;
+  Interven redacts before forwarding to your CRM.
+- **Block writes outside business hours:** Policy on `verb=WRITE` after 6pm.
+- **Approval for high-value lookups:** Require analyst approval for orders
+  over $10,000.
