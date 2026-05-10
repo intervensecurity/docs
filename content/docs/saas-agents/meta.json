@@ -1,4 +1,4 @@
 {
   "title": "SaaS Agent Protection",
-  "pages": ["index", "salesforce", "hubspot", "zendesk", "intercom"]
+  "pages": ["index", "salesforce", "hubspot", "zendesk", "intercom", "github-copilot"]
 }

@@ -1,0 +1,104 @@
+---
+title: Ephemeral Keys
+description: Just-in-time, scope-restricted credentials for short-lived agent access.
+---
+
+# Ephemeral Keys
+
+Short-lived API keys (`iv_eph_...`) issued for a specific agent action. Auto-revoke
+on TTL expiry, after `max_uses`, or manually. Use for closed-runtime SaaS agents
+(Devin, 11x, Artisan) and PAM-style single-action access.
+
+## When to use
+
+- **SaaS agents you can't fully control** — give the agent a key that lives 5
+  minutes, only allows `slack/post_message`, then auto-revokes.
+- **One-off elevated actions** — analyst grants a single-use key for a
+  destructive operation; key auto-revokes after one use.
+- **Demo / customer trials** — issue a 1-hour key with a tight scope; expires
+  by itself.
+
+## Mint via API
+
+```bash
+curl -X POST https://api.intervensecurity.com/v1/keys/ephemeral \
+  -H "Authorization: Bearer iv_live_your_parent_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ttl_seconds": 600,
+    "max_uses": 1,
+    "scope": {
+      "tools": ["slack"],
+      "verbs": ["WRITE"]
+    },
+    "description": "Single-post for incident #1234"
+  }'
+```
+
+Response:
+
+```json
+{
+  "key": "iv_eph_abc123...",
+  "ephemeral_id": "uuid",
+  "prefix": "iv_eph_abc123",
+  "expires_at": "2026-05-10T17:00:00.000Z",
+  "max_uses": 1,
+  "scope": { "tools": ["slack"], "verbs": ["WRITE"] }
+}
+```
+
+The full `key` is shown **once**. Store immediately. Hand it to the agent.
+
+## Mint via Console
+
+[Console → Ephemeral Keys → Mint key](https://app.intervensecurity.com/ephemeral-keys).
+Pick TTL, max-uses, optional tool/verb scope. The key reveals once — copy and
+hand to the agent.
+
+## Scope enforcement
+
+Every scan made with an ephemeral key is checked against its `scope` BEFORE
+the policy + risk pipeline runs. Out-of-scope calls return:
+
+```json
+{
+  "decision": "DENY",
+  "reason_codes": ["EPHEMERAL_SCOPE_VIOLATION"],
+  "violations": ["tool 'github' not in scope.tools=[\"slack\"]"]
+}
+```
+
+Supported scope fields:
+
+| Field | Effect |
+|-------|--------|
+| `tools` | Whitelist of tool names (`slack`, `github`, ...) |
+| `verbs` | Whitelist of CRUD verbs (`READ`, `WRITE`, `ADMIN`) |
+
+## Auto-revoke triggers
+
+- `expires_at` passes → status `expired`
+- `use_count >= max_uses` → status `exhausted`
+- Manual revoke via Console / `POST /ephemeral-keys/:id/revoke` → status `revoked`
+
+## Limits
+
+| Field | Min | Default | Max |
+|-------|-----|---------|-----|
+| `ttl_seconds` | 1 | 600 (10 min) | 86,400 (24 h) |
+| `max_uses` | 1 | 1 | 1,000 |
+
+## Listing & revoking
+
+```bash
+# List active
+curl https://api.intervensecurity.com/api/telemetry/ephemeral-keys?status=active
+
+# Revoke
+curl -X POST https://api.intervensecurity.com/api/telemetry/ephemeral-keys/<id>/revoke \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "manual"}'
+```
+
+(These endpoints are admin/console — use the Console UI for the easy path.)

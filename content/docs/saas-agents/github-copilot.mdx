@@ -1,0 +1,76 @@
+---
+title: GitHub Copilot
+description: Protect GitHub Copilot Coding Agent tool calls via the preToolUse hook.
+---
+
+# GitHub Copilot
+
+GitHub Copilot Coding Agent supports `preToolUse` hooks — synchronous scripts
+that run before every tool call (`bash`, `edit`, `create`, `view`, `grep`,
+`glob`, ...). Drop in `@interven/copilot-hook` and every tool call gets
+scanned through Interven before it runs.
+
+## Setup
+
+### 1. Get an API key
+
+[app.intervensecurity.com/api-keys](https://app.intervensecurity.com/api-keys) → mint key (`iv_live_...`).
+
+### 2. Add the hook to your repo
+
+Create `.github/hooks/preToolUse.json`:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "@interven/copilot-hook"],
+  "env": {
+    "INTERVEN_API_KEY": "iv_live_your_key_here"
+  }
+}
+```
+
+Commit and push.
+
+### 3. Verify
+
+Trigger a Copilot Coding Agent task. Watch decisions land in
+[Activity](https://app.intervensecurity.com/activity).
+
+## How it works
+
+```
+Copilot wants to run `bash rm -rf production-data/`
+       ↓ Coding Agent invokes preToolUse hook
+@interven/copilot-hook reads { toolName, toolArgs } from stdin
+       ↓ POST /v1/scan with method, url, body
+Interven runs full policy + risk pipeline
+       ↓ returns ALLOW / DENY / SANITIZE / REQUIRE_APPROVAL
+Hook writes JSON: { permissionDecision: "deny", reason: "DESTRUCTIVE_ACTION" }
+       ↓ Coding Agent honors the decision
+Copilot is blocked
+```
+
+## Decision mapping
+
+| Interven decision | Copilot result |
+|------|------|
+| `ALLOW` | Tool executes |
+| `DENY` | Tool blocked, agent gets reason codes |
+| `SANITIZE` | Tool executes (hooks can't rewrite args), but scan logged with SANITIZE for audit |
+| `REQUIRE_APPROVAL` | Tool blocked. After analyst approves, agent retries within 10 min for auto-allow |
+
+## Environment variables
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `INTERVEN_API_KEY` | required | Interven API key |
+| `INTERVEN_GATEWAY` | `https://api.intervensecurity.com` | Override for self-hosted |
+| `INTERVEN_TIMEOUT_MS` | `5000` | Hard timeout per scan |
+| `INTERVEN_FAIL_CLOSED` | `0` | Set to `1` to deny on hook failures (default: fail open to avoid breaking dev loop) |
+
+## Limitations
+
+- The hook can `allow` or `deny`. It cannot rewrite tool arguments.
+- `preToolUse` hooks are not enforced in subagents (GitHub issue #2392).
+- Failures default to fail-open. For high-stakes repos, set `INTERVEN_FAIL_CLOSED=1`.

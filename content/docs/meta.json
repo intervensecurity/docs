@@ -7,6 +7,7 @@
     "tools",
     "integrations",
     "saas-agents",
+    "ephemeral-keys",
     "policies",
     "api-reference",
     "self-host"
