@@ -99,6 +99,87 @@ Poll for approval status while the analyst decides.
 { "status": "approved" }   // or "pending" | "denied" | "expired"
 ```
 
+## POST /v1/policies/apply
+
+Idempotent upsert of a policy. Creates a new `policy_version` row server-side
+so the audit trail stays intact.
+
+Request:
+```json
+{
+  "name": "block-secrets-egress",
+  "description": "DENY any outbound carrying SECRETS",
+  "env_name": "production",
+  "rules": [
+    {
+      "rule_id": "deny-secrets",
+      "match": {},
+      "condition": { "has_data_class": ["SECRETS"] },
+      "action": "DENY",
+      "priority": 100
+    }
+  ]
+}
+```
+
+Response: `{ policy_id, name, env_name, version, rules }`.
+
+See [Policies](./policies) for full rule schema.
+
+## GET /v1/policies/by-name/[name]?env=production
+
+Fetch the latest version of a named policy.
+
+## POST /v1/keys/ephemeral
+
+Mint a short-lived, scope-restricted credential (prefix `iv_eph_*`).
+Use when you need to give an agent (e.g. Devin, 11x, Artisan) a credential
+you can revoke quickly.
+
+```json
+{
+  "ttl_seconds": 600,
+  "max_uses": 1,
+  "scope": { "tools": ["slack"], "verbs": ["WRITE"] },
+  "description": "One-time Slack post for incident #1234"
+}
+```
+
+Response includes the full `key` — shown **once**. See [Ephemeral Keys](./ephemeral-keys).
+
+## POST /v1/a2a/scan
+
+Scan an agent-to-agent message (when one of your agents delegates to another).
+
+```json
+{
+  "from_agent_id": "uuid-of-caller",
+  "to_agent_id": "uuid-of-recipient",
+  "method": "delegate",
+  "intent": "Have agent B post the incident summary to #ops",
+  "payload": { "incident_id": "INC-123", "channel": "#ops" }
+}
+```
+
+Cross-tenant and cross-environment A2A messages are rejected.
+
+## ALL /inbound/[prefix]/*
+
+Destination-side proxy. Configure inbound routes in
+[Console → Inbound Routes](https://app.intervensecurity.com/inbound-routes),
+then point SaaS agents (Salesforce Agentforce, HubSpot Breeze, Zendesk AI,
+Intercom Fin) at this URL instead of the real API.
+
+Interven scans every request through the policy + risk pipeline, then forwards
+to the configured upstream with stored credentials. Agent never sees the credential.
+
+Response headers always include:
+- `X-Interven-Decision` — `ALLOW` / `DENY` / `SANITIZE` / `REQUIRE_APPROVAL`
+- `X-Interven-Trace-Id` — UUID for telemetry correlation
+- `X-Interven-Reasons` — comma-separated reason codes (when present)
+
+See [SaaS Agent Protection](./saas-agents) for platform-specific setup guides.
+
 ## Error codes
 
 | Status | Meaning |

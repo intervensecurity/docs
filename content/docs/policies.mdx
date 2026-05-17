@@ -60,6 +60,51 @@ The Console supports two edit modes:
 2. **Raw JSON mode** — full control: multiple rules per policy, body-contains, custom priority,
    sanitize_fields. Click **Edit** on a policy → switch to **Raw JSON** tab.
 
+## Policy-as-Code (CI/CD)
+
+Manage policies as YAML/JSON in git. Use [`@interven/policy-cli`](https://www.npmjs.com/package/@interven/policy-cli)
+to validate, diff, and apply:
+
+```bash
+npm i -g @interven/policy-cli
+
+interven-policy validate policies/*.yaml
+interven-policy diff policies/*.yaml         # show drift vs server
+INTERVEN_API_KEY=iv_live_... \
+  interven-policy apply policies/*.yaml --env production
+```
+
+Production-grade templates (HIPAA, SOC2, PCI-DSS, GDPR) live at
+[`templates/policies/`](https://github.com/intervensecurity/AIF/tree/main/templates/policies).
+
+## Applying via API
+
+`POST /v1/policies/apply` is an idempotent upsert. Same key auth as `/v1/scan`:
+
+```bash
+curl -X POST https://api.intervensecurity.com/v1/policies/apply \
+  -H "Authorization: Bearer iv_live_..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "block-secrets-egress",
+    "description": "DENY any outbound carrying SECRETS",
+    "env_name": "production",
+    "rules": [
+      {
+        "rule_id": "deny-secrets",
+        "match": {},
+        "condition": { "has_data_class": ["SECRETS"] },
+        "action": "DENY",
+        "priority": 100
+      }
+    ]
+  }'
+```
+
+The endpoint accepts both the canonical nested shape above AND a legacy flat
+shape (where match/condition fields are flattened to top level) — flat
+input is auto-translated.
+
 ## Default ship-with policies
 
 When you sign up, your tenant gets these starter rules. Edit or disable any of them.
