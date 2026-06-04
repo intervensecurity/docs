@@ -7,9 +7,13 @@
     "tools",
     "integrations",
     "saas-agents",
+    "alerts",
     "ephemeral-keys",
     "policies",
     "api-reference",
-    "self-host"
+    "self-host",
+    "compliance",
+    "troubleshooting",
+    "fintech-quickstart"
   ]
 }

@@ -74,8 +74,8 @@ INTERVEN_API_KEY=iv_live_... \
   interven-policy apply policies/*.yaml --env production
 ```
 
-Production-grade templates (HIPAA, SOC2, PCI-DSS, GDPR) live at
-[`templates/policies/`](https://github.com/intervensecurity/AIF/tree/main/templates/policies).
+Production-grade templates (HIPAA, SOC2, PCI-DSS, GDPR) and the 7 starter packs live at
+[`packages/policy-packs/`](https://github.com/intervensecurity/aif/tree/main/packages/policy-packs).
 
 ## Applying via API
 
@@ -119,3 +119,30 @@ When you sign up, your tenant gets these starter rules. Edit or disable any of t
 | P1/P2: GitHub external collaborator + PR review | github | DENY / REQUIRE_APPROVAL |
 | P6: Require Approval for IAM User Creation | aws | REQUIRE_APPROVAL |
 | P7: Deny AWS Admin Policy Attachment | aws | DENY |
+
+## Starter policy packs
+
+In addition to the default tenant policies, Interven ships seven curated YAML
+**policy packs** for common use cases. Apply via the policy CLI or the Console.
+
+| Pack | Use case |
+|------|----------|
+| `sre.yaml` | SRE / DevOps agents — destructive ops require approval, prod-tagged resources locked down |
+| `vibe-coder.yaml` | AI coding assistants — block secret commits, gate force-push, scan dependency installs |
+| `hobbyist.yaml` | Solo builders — secret egress + obvious-bad URL blocks; lightweight defaults |
+| `browser-agent.yaml` | Browser Use / Computer Use agents — block card/SSN form submits, threat-intel match on URLs |
+| `enterprise-oem.yaml` | OEM / platform integrators — strict tenant isolation, audit-heavy, opt-in by feature |
+| `healthcare-hipaa.yaml` | HIPAA-aligned — PHI patterns (MRN/NPI/DEA/ICD-10/CPT/MBI/DOB), BAA-friendly defaults |
+| `iso-42001.yaml` | EU AI Act / ISO 42001 alignment — model output classification, human-oversight triggers |
+
+Apply via CLI:
+
+```bash
+npx -y @interven/policy-cli apply \
+  --pack sre.yaml \
+  --pack healthcare-hipaa.yaml \
+  --env production
+```
+
+Source for all packs lives at
+[`packages/policy-packs/`](https://github.com/intervensecurity/aif/tree/main/packages/policy-packs).

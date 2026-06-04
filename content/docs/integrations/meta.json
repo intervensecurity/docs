@@ -1,4 +1,18 @@
 {
   "title": "Integrations",
-  "pages": ["gateway-cli", "javascript", "langchain", "mcp", "crewai", "openai-assistants", "openclaw"]
+  "pages": [
+    "gateway-cli",
+    "python",
+    "javascript",
+    "langchain",
+    "langgraph",
+    "langsmith",
+    "crewai",
+    "openai-assistants",
+    "mcp",
+    "claude-code",
+    "cursor",
+    "browser-use",
+    "openclaw"
+  ]
 }

@@ -1,0 +1,121 @@
+---
+title: Browser Use & Computer Use
+description: Action-level guard for browser-driving and OS-driving AI agents — block dangerous form submits, exfil URLs, and credential-bearing clicks before they execute.
+---
+
+`interven-computer-use` is a Python shim that scans every action a browser agent
+(Browser Use) or OS agent (Anthropic Computer Use) intends to take. The agent loop
+calls `guard.check(action)` before its executor performs the action; the verdict
+tells you whether to proceed.
+
+Use this whenever your agent's "tool calls" don't go through an HTTP layer you
+control — they hit a real browser, a real desktop, a real keyboard.
+
+## Install
+
+```bash
+pip install interven-computer-use
+```
+
+In-tree (latest fixes, this repo's code):
+
+```bash
+pip install -e packages/computer-use-shim
+```
+
+## Quickstart
+
+```python
+from interven_computer_use import IntervenGuard
+
+guard = IntervenGuard()  # reads INTERVEN_API_KEY / INTERVEN_GATEWAY from env
+
+action = {
+    "name": "submit_form",
+    "input": {"selector": "#payment", "card_number": "4111 1111 1111 1111", "cvv": "123"},
+}
+
+verdict = guard.check(action)
+if verdict.proceed:
+    your_executor.run(action)
+else:
+    print(f"{verdict.decision} — {verdict.reason}")
+```
+
+`verdict.decision` is a plain string: `ALLOW` / `DENY` / `SANITIZE` / `REQUIRE_APPROVAL`.
+
+## Action shape
+
+The shim expects each action as a `{"name", "input"}` block — the same shape Anthropic
+Computer Use emits as `tool_use` blocks. Map your real agent's actions to that shape
+and the guard call is identical regardless of source.
+
+```python
+# Browser Use action → shim shape
+{"name": "go_to_url",   "input": {"url": "https://shop.example.com/cart"}}
+{"name": "click",       "input": {"selector": "#checkout"}}
+{"name": "input_text",  "input": {"selector": "#email", "text": "buyer@example.com"}}
+{"name": "submit_form", "input": {"selector": "#payment", "card_number": "4111..."}}
+```
+
+## What gets caught
+
+The shim sends the action name + input to `/v1/scan`. Interven runs the full pipeline
+on the input payload — so anything the policy or detection engines would catch on a
+normal HTTP request gets caught here too:
+
+| Scenario | Decision |
+|----------|----------|
+| Navigate to a clean URL | ALLOW |
+| Click a button with a benign selector | ALLOW |
+| Submit a form with a card number | DENY (PCI pattern in `input`) |
+| Submit a form with secrets / API keys | DENY (secret pattern) |
+| Navigate to a URL flagged in threat-intel feeds | DENY (threat-intel) |
+| Type PII into a third-party form | SANITIZE (redacted text returned) |
+
+## Wiring into a real Browser Use loop
+
+```python
+from browser_use import Agent
+from interven_computer_use import IntervenGuard
+
+guard = IntervenGuard()
+
+class GuardedExecutor:
+    def __init__(self, inner):
+        self.inner = inner
+    def run(self, action):
+        v = guard.check({"name": action.type, "input": action.params})
+        if not v.proceed:
+            raise PermissionError(f"Blocked by Interven: {v.decision}")
+        return self.inner.run(action)
+
+agent = Agent(executor=GuardedExecutor(your_browser_executor))
+agent.run("buy a coffee from shop.example.com")
+```
+
+## Anthropic Computer Use
+
+The tool_use block Anthropic emits is already in the expected shape — pass it directly:
+
+```python
+for block in response.content:
+    if block.type == "tool_use":
+        verdict = guard.check({"name": block.name, "input": block.input})
+        if not verdict.proceed:
+            continue
+        execute_on_screen(block)
+```
+
+## Environment variables
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `INTERVEN_API_KEY` | required | Your `iv_live_*` key |
+| `INTERVEN_GATEWAY` | `https://api.intervensecurity.com` | Override for self-hosted |
+
+## Working demo
+
+End-to-end runnable example: [`examples/browser-use/`](https://github.com/intervensecurity/aif/tree/main/examples/browser-use).
+The demo runs against a stubbed action list by default (no real browser required) so
+you can see ALLOW / DENY behavior in seconds.

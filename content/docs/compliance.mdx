@@ -1,0 +1,102 @@
+---
+title: Compliance
+description: SOC 2, HIPAA, ISO 27001, GDPR, EU AI Act / ISO 42001, PCI — current Interven posture and where to get evidence.
+---
+
+Procurement and audit teams need one canonical page. This is it. Status is honest:
+active certifications, in-flight audits, and aligned-but-not-certified are clearly
+distinguished.
+
+## Status at a glance
+
+| Standard | Status | Notes |
+|----------|--------|-------|
+| **SOC 2 Type II** | In progress (target Q4 2026) | Letter of attestation available on request; in-progress controls list available under NDA |
+| **HIPAA / BAA** | Available on Enterprise | We sign a BAA before any PHI flows through; PHI patterns (MRN/NPI/DEA/ICD-10/CPT/MBI/DOB) are built into the PII classifier |
+| **GDPR** | Aligned | DPA available; data residency control on Pro+ |
+| **ISO 27001** | Targeted for 2027 | Many controls already implemented and SOC 2-overlapping |
+| **EU AI Act / ISO 42001** | Aligned policy pack | Starter pack `iso-42001.yaml` covers human-oversight triggers and model output classification |
+| **PCI DSS** | Out of scope (we don't process cardholder data) | Stripe handles all PCI for our billing; you can use Interven with a PCI environment, we just don't store CHD |
+
+For everything below, the contact is **security@intervensecurity.com**.
+
+## SOC 2
+
+We're in active prep for SOC 2 Type II. The target window is **observation through
+Q4 2026** with a Type II report shortly after.
+
+- Type I attestation (point-in-time controls in place) — letter available on request.
+- In-flight controls list — available under NDA.
+- Penetration test — performed annually by a 3rd-party assessor; summary available
+  under NDA.
+
+If your procurement timeline depends on the final report, ask us — we can usually
+share interim evidence sufficient to unblock the next stage of evaluation.
+
+## HIPAA / BAA
+
+The technical pieces are already in place:
+
+- PHI patterns in the PII classifier: **MRN** (medical record number), **NPI**
+  (national provider identifier), **DEA** (Drug Enforcement Administration ID),
+  **ICD-10** + **CPT** (diagnosis / procedure codes), **MBI** (Medicare Beneficiary
+  ID), **DOB**.
+- The `healthcare-hipaa.yaml` starter policy pack denies common PHI egress patterns
+  out of the box.
+- Tool-call audit logs are HIPAA-compatible (append-only, retention controls, RBAC).
+
+We sign a **Business Associate Agreement** for Enterprise tier customers. Email
+sales@intervensecurity.com to request the BAA.
+
+## GDPR
+
+- **Data Processing Addendum (DPA)** available on request.
+- **Right to access / export / delete** — email privacy@intervensecurity.com.
+  Responses within 30 days.
+- **Subprocessors**: Stripe (billing), Sentry (errors, EU residency), our cloud host
+  (compute + storage). Current list available on request.
+- **Data residency** — hosted Interven is UAE today; multi-region (EU, US, Singapore)
+  available on Pro and Enterprise plans. Self-hosted gives you full control.
+- **Right to object / portability** — your decision history is exportable as
+  NDJSON / CSV at any time via `/api/telemetry/decisions/export`.
+
+## EU AI Act / ISO 42001
+
+The `iso-42001.yaml` starter pack covers:
+
+- Logging of every model-mediated agent decision with sufficient context for
+  auditability (Article 12).
+- Human-oversight triggers for high-risk system categories (Article 14).
+- Output classification for sensitive content categories.
+
+If you're scoping a high-risk AI system under the EU AI Act, the audit trail
+Interven generates is designed to satisfy the record-keeping requirements out of
+the box. Talk to us if you need help mapping your specific deployment.
+
+## Self-hosted compliance
+
+If your compliance posture requires data-never-leaves-our-environment, the same
+stack runs as a single docker-compose deploy. AES-256-GCM at rest, OIDC SSO,
+multi-channel alerts, SIEM exports — same product, your infrastructure. See
+[Self-hosting](/docs/self-host).
+
+## Vulnerability disclosure
+
+Email **security@intervensecurity.com**. We acknowledge within 1 business day and
+share a fix or mitigation plan within 7 days for high-severity issues. Public CVEs
+(with reporter credit, if you want) when the fix ships.
+
+## Procurement evidence
+
+Most procurement teams need a subset of:
+
+- SOC 2 letter of attestation (Type I today, Type II Q4 2026)
+- Penetration test summary
+- DPA (GDPR data processing addendum)
+- BAA (HIPAA — Enterprise only)
+- Subprocessor list
+- Encryption / key-management whitepaper
+- Architecture diagram
+- Incident response plan
+
+Email security@intervensecurity.com — we'll send the package under NDA.

@@ -1,0 +1,64 @@
+---
+title: Decagon
+description: Protect Decagon AI concierge agents via API endpoint config pointing at Interven.
+---
+
+# Decagon
+
+Decagon's AI concierge agents call external systems via configurable API endpoints.
+Each endpoint has a base URL and an auth header — point the URL at Interven and
+move the real credential into the Interven inbound route.
+
+## Setup
+
+### 1. Create the inbound route in Interven
+
+[Console → Inbound Routes → Add route](https://app.intervensecurity.com/inbound-routes)
+
+- **Path prefix:** `decagon-account`
+- **Upstream URL:** `https://api.your-backend.example.com/v2`
+- **Upstream headers:**
+  ```
+  Authorization: Bearer your-real-backend-token
+  X-Internal-Auth: your-internal-key
+  ```
+- **Tool name:** `custom_proxy` (or set to a built-in if matched)
+
+### 2. Configure Decagon endpoint
+
+In Decagon's agent settings → **API integrations → Add endpoint**:
+
+- **URL:** `https://api.intervensecurity.com/inbound/decagon-account/lookup`
+- **Auth:** none (Interven supplies the real auth on egress)
+- **Request shape:** match what your real backend expects
+
+### 3. Wire into the conversation flow
+
+Reference the endpoint in your Decagon flow's tool catalog. The agent invokes it
+during customer conversations; Interven evaluates each call before forwarding.
+
+## Behavior
+
+| Interven decision | Decagon agent sees |
+|-------------------|-------------------|
+| `ALLOW` | Real backend response, agent continues |
+| `DENY` | HTTP 403 — agent shows error message or escalates |
+| `SANITIZE` | Real backend response; redacted body went upstream |
+| `REQUIRE_APPROVAL` | HTTP 202 — agent treats as transient or hands off to human |
+
+## Typical use cases
+
+- **PII scrub before backend** — customer types email/phone into the chat; Interven
+  redacts before forwarding to your CRM or billing system.
+- **High-value action gating** — require human approval for refunds over $X,
+  account closures, or any irreversible write.
+- **Threat-intel + business-hours rules** — block off-hours WRITE operations on
+  sensitive endpoints; pair with the SRE starter pack.
+
+## Caveats
+
+- Decagon's timeout for external calls is typically tight (5–15s depending on
+  your plan). Interven adds <100ms in normal operation but can spike on threat-intel
+  cold lookups — tune `THREAT_INTEL_TIMEOUT_MS` if needed.
+- One inbound route per upstream service is cleaner than a catch-all for policy
+  attribution.

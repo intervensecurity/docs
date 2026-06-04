@@ -1,0 +1,146 @@
+---
+title: Alerts & Notifications
+description: Route DENY / REQUIRE_APPROVAL / INCIDENT events to Slack, Discord, Microsoft Teams, Telegram, and your SIEM (CEF / OCSF / webhook).
+---
+
+Every decision Interven makes can route to one or more notification channels. Configure
+under **Console → Alerts → Add channel**. Each channel has its own event filter and
+minimum-severity threshold.
+
+## Supported channels
+
+| Channel | Direction | Special features |
+|---------|-----------|------------------|
+| Slack | Push | **Interactive Approve / Deny buttons** for `REQUIRE_APPROVAL` events |
+| Discord | Push | One-way alerts via incoming webhook |
+| Microsoft Teams | Push | One-way alerts via incoming webhook |
+| Telegram | Push | One-way alerts via bot token |
+| SIEM webhook | Push (HTTP POST) | CEF / OCSF / custom JSON formats |
+| Decisions export | Pull (HTTPS) | NDJSON / CSV / Splunk / Datadog formats |
+
+## Slack (recommended for approvals)
+
+Interactive Approve / Deny buttons land in the channel; the analyst clicks; the agent's
+retry within 10 minutes auto-allows via `RECENT_APPROVAL_GRANT`. No context-switch to
+the Console required.
+
+### Setup
+
+1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps).
+2. Enable **Incoming Webhooks** → install to workspace → add the webhook to your
+   target channel (e.g. `#interven-alerts`).
+3. Enable **Interactivity & Shortcuts** → set Request URL to
+   `https://api.intervensecurity.com/v1/slack/interactions`.
+4. Copy the **Signing Secret** from Basic Information.
+5. In Console → **Alerts → Add Slack channel**:
+   - Webhook URL: from step 2
+   - Signing secret: from step 4
+   - Events: `REQUIRE_APPROVAL` + `DENY` + `INCIDENT` (your call)
+   - Min severity: `HIGH` is a good starting point
+6. Click **Test** — a sample card with Approve / Deny buttons should land in Slack.
+
+### Card format
+
+```
+[Interven]   REQUIRE_APPROVAL
+agent: production-langgraph
+tool:  slack.post_message
+why:   PII_EGRESS, SENSITIVE_DATA_EGRESS
+risk:  HIGH (0.71)
+
+[ Approve ]  [ Deny ]  [ View in Console ]
+```
+
+## Discord
+
+1. In your Discord server → channel settings → **Integrations → Webhooks → New Webhook**.
+2. Copy the webhook URL.
+3. Console → **Alerts → Add Discord channel** → paste URL → pick events + severity.
+
+Discord doesn't support interactive buttons in webhooks today, so approvals are
+clickable links back to the Console.
+
+## Microsoft Teams
+
+1. In your Teams channel → **⋯ → Connectors → Incoming Webhook → Configure**.
+2. Name the connector, save, copy the URL.
+3. Console → **Alerts → Add Teams channel** → paste URL → pick events + severity.
+
+## Telegram
+
+1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → save the bot token.
+2. Add the bot to the channel you want alerts in.
+3. Get the chat ID: send a message to the channel, then
+   `curl https://api.telegram.org/bot<TOKEN>/getUpdates` and read `chat.id`.
+4. Console → **Alerts → Add Telegram channel** → token + chat ID → pick events.
+
+## SIEM webhook
+
+For Splunk HEC, Datadog Logs, Sumo Logic HTTP source, or any HTTP endpoint that
+accepts JSON.
+
+### Setup
+
+1. Console → **Alerts → Add SIEM webhook**.
+2. URL: your SIEM intake endpoint.
+3. Format: `CEF` (ArcSight, QRadar) / `OCSF` (cross-vendor) / `JSON` (custom).
+4. Headers: add `Authorization: Splunk <hec-token>` or equivalent.
+5. Events: typically `ALL` (DENY + APPROVAL + INCIDENT + SANITIZE).
+
+### Example CEF event
+
+```
+CEF:0|Interven|AIF|0.6|DENY|Secret egress blocked|7|
+src=10.0.0.42 act=DENY app=slack.post_message
+externalId=f1e2d3c4-... cs1Label=reasons cs1=SECRET_DETECTED
+```
+
+### Example OCSF event (excerpt)
+
+```json
+{
+  "metadata": { "product": { "name": "Interven AIF" }, "version": "0.6.0" },
+  "class_name": "Security Finding",
+  "severity_id": 4,
+  "activity_id": 2,
+  "finding_info": {
+    "title": "Secret egress blocked",
+    "uid": "f1e2d3c4-..."
+  },
+  "observables": [
+    { "name": "interven.tool", "value": "slack" },
+    { "name": "interven.operation", "value": "post_message" }
+  ]
+}
+```
+
+## Pull-mode (decisions export)
+
+For audit teams that prefer a daily pull over real-time push, the
+`/api/telemetry/decisions/export` endpoint returns the same data in five formats:
+
+```bash
+curl -sS -b /etc/interven/auditor-session.cookie \
+  "https://app.intervensecurity.com/api/telemetry/decisions/export?format=splunk&since=2026-06-01T00:00:00Z&until=2026-06-02T00:00:00Z" \
+  | curl -sS -X POST "https://splunk.your-corp.internal:8088/services/collector/event" \
+      -H "Authorization: Splunk $SPLUNK_HEC_TOKEN" --data-binary @-
+```
+
+Formats: `json` · `csv` · `splunk` · `datadog` · `ndjson`.
+
+Run this as a cron from an Auditor-role API session — auditors can pull their own
+evidence without touching production data.
+
+## Severity & event filtering
+
+Each channel has independent filters:
+
+| Field | Values |
+|-------|--------|
+| Events | `ALLOW` · `DENY` · `SANITIZE` · `REQUIRE_APPROVAL` · `INCIDENT` (multi-select) |
+| Min severity | `LOW` · `MEDIUM` · `HIGH` · `CRITICAL` |
+| Tool filter | All / specific (e.g. only Slack + GitHub) |
+| Agent filter | All / specific agent IDs |
+
+Common setup: a quiet `#interven-alerts` Slack channel for `HIGH+` approvals only,
+plus a full firehose to your SIEM webhook for everything.

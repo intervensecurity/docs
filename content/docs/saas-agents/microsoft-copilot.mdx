@@ -1,0 +1,84 @@
+---
+title: Microsoft Copilot Studio
+description: Protect Microsoft Copilot Studio custom agents via Custom Connector or MCP server URL pointing at Interven.
+---
+
+# Microsoft Copilot Studio
+
+Microsoft Copilot Studio supports two extension surfaces Interven can govern:
+
+1. **Custom Connectors** — for REST API integrations defined per-agent
+2. **MCP server endpoints** — for custom agents that consume Model Context Protocol tools
+
+Both surfaces accept a URL you control. Point that URL at Interven; the real
+upstream credential lives in Interven's vault.
+
+> **Scope:** This page covers **custom agents** built in Copilot Studio. The
+> built-in Microsoft 365 Copilot (Word / Outlook / Teams Copilot) runs entirely
+> inside Microsoft's cloud and has no extension point Interven can intercept.
+
+## Option A — Custom Connector
+
+### 1. Create the inbound route in Interven
+
+[Console → Inbound Routes → Add route](https://app.intervensecurity.com/inbound-routes)
+
+- **Path prefix:** `copilot-crm`
+- **Upstream URL:** `https://api.your-crm.example.com/v1`
+- **Upstream headers:**
+  ```
+  Authorization: Bearer your-real-crm-token
+  ```
+
+### 2. Define the Custom Connector
+
+In Power Platform Maker → **Custom Connectors → New custom connector → Create from blank**:
+
+- **Host:** `api.intervensecurity.com`
+- **Base URL:** `/inbound/copilot-crm`
+- **Security:** **No authentication** (Interven supplies real auth)
+- **Definition:** describe the operations your agent will call (OpenAPI 3.0)
+
+### 3. Add to your Copilot agent
+
+In Copilot Studio → your agent → **Actions → Add an action → From Custom Connector**.
+Select the operations you defined.
+
+## Option B — MCP server
+
+For custom agents that use MCP tools, set the MCP server URL to point at the
+Interven MCP gateway. See [MCP integration](/docs/integrations/mcp).
+
+The MCP server URL goes in your Copilot Studio agent's MCP config:
+
+```
+https://api.intervensecurity.com/mcp
+```
+
+The MCP guard exposes `interven_scan` plus any tools you've defined upstream; the
+custom Copilot agent uses them through the same MCP transport it already speaks.
+
+## Behavior
+
+| Interven decision | Copilot Studio sees |
+|-------------------|---------------------|
+| `ALLOW` | Real upstream's response, transparent to the agent |
+| `DENY` | HTTP 403 — Copilot Studio surfaces a friendly error |
+| `SANITIZE` | Real upstream's response; redacted body was forwarded |
+| `REQUIRE_APPROVAL` | HTTP 202 — agent treats as transient; user can be notified to retry |
+
+## Caveats
+
+- Microsoft's enterprise data boundary and **Microsoft Purview** policies live
+  in Microsoft's cloud. Interven complements them — Purview governs the LLM
+  layer (sensitivity labels, conversation logging, DLP); Interven governs the
+  **action layer** (what the agent actually does once it decides to call a tool).
+- For built-in M365 Copilot, your control surfaces are Purview + Microsoft Entra
+  conditional access. Custom agents in Copilot Studio are the path where Interven
+  applies.
+
+## Why this works
+
+Custom Connectors and MCP server URLs are customer-controlled per-environment.
+You can repoint them to Interven across dev / test / production without changing
+agent definitions, and the agent never holds the real upstream credential.

@@ -1,0 +1,63 @@
+---
+title: Sierra
+description: Protect Sierra customer-service agents via Custom API integrations pointing at Interven.
+---
+
+# Sierra
+
+Sierra's agent platform calls external systems through **Custom API integrations**.
+Each integration has a URL and an auth config — point the URL at Interven, leave
+auth off (Interven supplies the real credential).
+
+## Setup
+
+### 1. Create the inbound route in Interven
+
+[Console → Inbound Routes → Add route](https://app.intervensecurity.com/inbound-routes)
+
+- **Path prefix:** `sierra-orders`
+- **Upstream URL:** `https://your-order-api.example.com/v1`
+- **Upstream headers:**
+  ```
+  Authorization: Bearer your-real-order-api-token
+  ```
+- **Tool name:** `custom_proxy` (or a specific tool name if it matches a built-in normalizer)
+
+### 2. Configure Sierra integration
+
+In Sierra's agent admin → **Integrations → Custom API → New integration**:
+
+- **Method:** `POST`
+- **URL:** `https://api.intervensecurity.com/inbound/sierra-orders/lookup`
+- **Authentication:** None — Interven adds the real auth on egress
+- **Headers:** keep what your agent flow needs (Sierra context headers pass through)
+- **Body schema:** match what your real upstream expects (Interven only inspects, doesn't reshape)
+
+### 3. Use in agent flows
+
+Reference the integration in Sierra's flow builder. The agent invokes it during
+conversations; Interven scans every call before forwarding to the real upstream.
+
+## Behavior
+
+| Interven decision | Sierra agent sees |
+|-------------------|-------------------|
+| `ALLOW` | Real upstream response, transparently |
+| `DENY` | HTTP 403 — flow surfaces an error message to the customer |
+| `SANITIZE` | Forwards redacted body to real upstream; customer's PII never reaches it |
+| `REQUIRE_APPROVAL` | HTTP 202 + `approval_id`; flow can wait + retry, or escalate to human |
+
+## Why this works
+
+Sierra exposes the Custom API URL as a first-class config field. You can repoint it
+to Interven any time without redeploying the agent flow. The agent never holds the
+real upstream credential — that lives in Interven's encrypted credential vault.
+
+## Caveats
+
+- Sierra's response handling expects upstream-style HTTP status codes. The
+  `REQUIRE_APPROVAL` path returns 202; check your flow's retry logic handles
+  non-200 responses gracefully (or maps 202 to a "wait + retry" branch).
+- For complex multi-step actions, define one inbound route per upstream service
+  rather than a single catch-all route — it gives you per-route policy + tool-name
+  attribution in Activity.

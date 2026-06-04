@@ -4,9 +4,9 @@ description: Inline policy + risk firewall for AI agent tool calls.
 ---
 
 Interven sits between your AI agents and the upstream APIs they call (Slack, GitHub,
-Salesforce, Jira, Workday, etc.). Every governed call is **normalized**, **classified**
-for secrets and PII, run through **policy** and **risk** signals, and gets one of four
-outcomes:
+Salesforce, Jira, Stripe, AWS, internal services, anything HTTP). Every governed call is
+**normalized**, **classified** for secrets and PII, run through **policy** and **risk**
+signals, and gets one of four outcomes:
 
 | Decision | Meaning |
 |----------|---------|
@@ -17,28 +17,42 @@ outcomes:
 
 ## Why teams use Interven
 
-- **Drop-in for any framework.** LangChain, CrewAI, OpenAI Assistants, OpenClaw, or
-  the raw `/v1/scan` HTTP API. Five lines of code per integration.
+- **Drop-in for any framework.** LangChain, LangGraph, CrewAI, OpenAI Assistants,
+  MCP-based agents (Claude Desktop, Cursor, Cline), Claude Code, Browser Use,
+  GitHub Copilot Coding Agent, OpenClaw, or the raw `/v1/scan` HTTP API. Five
+  lines of code per integration — and zero code for SaaS agents you don't control.
+- **Protect agents you can't modify.** Salesforce Agentforce, HubSpot Breeze,
+  Zendesk AI, Intercom Fin, and other vendor-hosted agents are governed via
+  destination-side proxy (Inbound Routes) — point the agent at Interven, Interven
+  scans then forwards with stored credentials.
 - **Human-in-the-loop on writes.** When the agent wants to do something sensitive,
-  it pauses; an analyst clicks Approve in the Console; the agent finishes — same
-  turn, no retry needed.
-- **Built-in DLP.** PII, SECRETS, and INTERNAL data classifiers fire before the
-  payload leaves your network.
-- **Per-tenant credential vault.** Agents call Slack, GitHub, Drive, Jira through
-  Interven using only an `iv_live_*` API key. Real OAuth tokens never reach the
-  agent runtime.
+  it pauses; an analyst clicks Approve in Slack / Discord / Teams / Telegram or the
+  Console; the agent finishes — same turn, no retry needed.
+- **Built-in detection.** 20+ secret patterns, PII (email/SSN/card), and PHI
+  (MRN/NPI/DEA/ICD-10/CPT/MBI/DOB) classifiers fire before the payload leaves
+  your network. Six free threat-intel feeds catch known-bad URLs and IPs.
+- **Per-agent trust scoring.** Trust degrades after policy violations and recovers
+  on clean behavior — agents under scrutiny get tighter rules automatically.
+- **Ephemeral credentials.** Mint single-use, scope-restricted `iv_eph_*` keys
+  with a TTL for one-shot agent actions or short-lived demos.
 - **Policy you can actually write.** Match by tool, operation, data class, body
-  content, or external principal. Edit in a wizard or as raw JSON.
+  content, or external principal. Edit in a wizard, raw JSON, or as YAML in git.
 
 ## Get started
 
 <Cards>
   <Card title="Quickstart — first scan in 5 lines" href="/docs/quickstart" />
   <Card title="Pick your framework" href="/docs/integrations/langchain" />
+  <Card title="Protect a SaaS agent (no code)" href="/docs/saas-agents" />
+  <Card title="Gateway CLI (zero code)" href="/docs/integrations/gateway-cli" />
   <Card title="Concepts" href="/docs/concepts" />
+  <Card title="API reference" href="/docs/api-reference" />
 </Cards>
 
-## Beta access
+## Pricing & access
 
-Interven is in private beta. To request access, email **founder@intervensecurity.com**
-or join the [community Slack](https://intervensecurity.com/slack).
+Self-serve sign-up is open at
+[app.intervensecurity.com/signup](https://app.intervensecurity.com/signup).
+Free tier includes 1,000 scans/month — no credit card. Paid tiers start at $19/mo.
+See [pricing](https://intervensecurity.com/pricing) for the full plan comparison or
+email **sales@intervensecurity.com** for enterprise / self-hosted / BAA needs.

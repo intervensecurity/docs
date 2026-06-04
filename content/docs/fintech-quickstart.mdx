@@ -267,10 +267,11 @@ For Datadog, swap `format=splunk` → `format=datadog` and POST to your DD intak
 
 - **Self-host Interven** — the SaaS at `api.intervensecurity.com` is
   multi-tenant with AES-256-GCM at rest, dedicated RBAC, and SOC 2-aligned
-  controls. Self-hosted is supported (`infra/docker-compose.prod.yml`) but
-  not required for most fintech buyers in 2026.
-- **Custom IAM / SAML SSO** — currently username/password + per-user role.
-  SAML SSO ships in v0.5.
+  controls. Self-hosted is supported via docker-compose but not required for
+  most fintech buyers.
+- **Custom IAM / SCIM** — username/password and OIDC SSO (Google + Microsoft)
+  are generally available; per-user roles included. SAML / SCIM provisioning
+  is on the Enterprise roadmap — contact sales if it's a procurement blocker.
 
 ## What to ask procurement / your CISO before scaling
 
@@ -278,13 +279,16 @@ These are the usual fintech-CISO due-diligence questions. Honest answers:
 
 | Question | Today |
 |----------|-------|
-| Where is decision data stored? | Neon Postgres (Frankfurt + Virginia) — pin region in your contract |
-| Are webhook URLs / API tokens encrypted? | Yes. AES-256-GCM, single-tenant key |
-| Audit log immutability? | append-only inserts; deletes only via the retention prune job (logged) |
-| SOC 2 attestation? | In progress (target: Q3 2026) |
-| Right-to-deletion for EU tenants? | Yes — set retention to 30 days OR submit a DELETE request |
-| SLA? | Best-effort during beta; 99.5% in v1.0 |
-| Data residency control? | EU-only deploy roadmapped for v0.5 |
+| Where is decision data stored? | Hosted: UAE-region Postgres under our direct control. Self-hosted: 100% inside your infrastructure (single docker-compose). |
+| Are webhook URLs / API tokens encrypted? | Yes. AES-256-GCM at rest, single-tenant key via `INTERVEN_CREDENTIAL_ENCRYPTION_KEY`. |
+| Audit log immutability? | Append-only inserts; deletes only via the retention prune job (logged with `retention_last_pruned_at`). |
+| SOC 2 attestation? | Type II in progress (target: Q4 2026). Letter of attestation available on request. |
+| HIPAA BAA? | Available on Enterprise tier. |
+| Right-to-deletion for EU tenants? | Yes — set retention to 30 days OR submit a DELETE request to privacy@intervensecurity.com. |
+| SLA? | Free / Solo / Team: best-effort. Pro: 99.5%. Enterprise: contracted up to 99.9%. |
+| Data residency control? | Hosted is UAE today; multi-region (EU, US) available on Pro and Enterprise. Self-hosted gives you full control. |
+| SSO? | OIDC (Google + Microsoft) generally available. SAML / SCIM on the Enterprise roadmap — talk to us if it's a procurement blocker. |
 
-If any of these are blockers, [email founder@intervensecurity.com](mailto:founder@intervensecurity.com)
-and we'll work it out — fintech design partners get priority on roadmap items.
+For complete compliance posture see [Compliance](/docs/compliance). If anything is a
+blocker, [email sales@intervensecurity.com](mailto:sales@intervensecurity.com) — fintech
+design partners get priority on roadmap items.

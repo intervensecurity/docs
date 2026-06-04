@@ -35,7 +35,7 @@ DATABASE_URL=$(grep ^DATABASE_URL= .env | cut -d= -f2-) ./infra/fly/apply-migrat
 | Var | Purpose |
 |-----|---------|
 | `DATABASE_URL` | Postgres connection string |
-| `REDIS_URL` | Optional. Falls back to in-memory rate limiting |
+| `REDIS_URL` | Optional. Falls back to in-memory rate limiting (single-node only — set this on multi-node deploys) |
 | `AIF_CONSOLE_SECRET` | 32+ char hex, JWT signing key (must match across telemetry + console) |
 | `ADMIN_USER` / `ADMIN_PASS` | First-login bootstrap for the console |
 | `INTERVEN_API_KEYS_ADMIN_SECRET` | Bearer for the admin `/v1/keys` endpoint |
@@ -44,6 +44,30 @@ DATABASE_URL=$(grep ^DATABASE_URL= .env | cut -d= -f2-) ./infra/fly/apply-migrat
 
 Generate any 32-char secret with `openssl rand -hex 32`. The credential encryption key
 needs `openssl rand -hex 32` too (32 bytes = 64 hex chars).
+
+## Optional: OIDC SSO
+
+Both Google and Microsoft OIDC are supported. Set per-provider env vars; the Console
+exposes the matching sign-in buttons automatically.
+
+| Var | Purpose |
+|-----|---------|
+| `GOOGLE_OIDC_CLIENT_ID` / `GOOGLE_OIDC_CLIENT_SECRET` | Google Workspace SSO |
+| `MICROSOFT_OIDC_CLIENT_ID` / `MICROSOFT_OIDC_CLIENT_SECRET` / `MICROSOFT_OIDC_TENANT_ID` | Microsoft Entra ID SSO |
+| `OIDC_REDIRECT_URI` | Must match what you configured in the provider — usually `https://your-console-domain/api/auth/oidc/callback` |
+
+SAML / SCIM are not implemented today — on the Enterprise roadmap.
+
+## Optional: Alert channels
+
+Multi-channel alerts route DENY / REQUIRE_APPROVAL / INCIDENT events to your team.
+Configure under **Console → Alerts → Add channel**:
+
+- **Slack** — incoming webhook + signing secret (enables interactive Approve/Deny buttons)
+- **Discord** — incoming webhook (one-way alerts)
+- **Microsoft Teams** — incoming webhook
+- **Telegram** — bot token + chat ID
+- **SIEM** — HTTP webhook accepting CEF or OCSF payloads (Splunk HEC, Datadog, custom)
 
 ## TLS + custom domain
 
@@ -67,3 +91,21 @@ Postgres is the only stateful component. Use whatever backup mechanism your DB
 provider gives you (Neon point-in-time, RDS snapshots, `pg_dump` cron). Tool
 credentials are AES-256-GCM encrypted with `INTERVEN_CREDENTIAL_ENCRYPTION_KEY` —
 keep that key in a secrets manager and back it up separately from the DB.
+
+### Reference backup setup
+
+For a single-VPS deployment the included `infra/scripts/backup.sh` runs a daily
+`pg_dump` to `/var/backups/interven/`. Off-site mirroring is up to you — common
+options:
+
+- **rsync over SSH** to a separate machine (lowest setup; encrypt the destination).
+- **Cron to S3** (`aws s3 cp`) with versioned + server-side-encrypted bucket.
+- **Restic** to any S3-compatible target with deduplication.
+
+Test restore at least quarterly: a backup you can't restore is not a backup.
+
+## Monitoring
+
+We recommend Sentry for error monitoring on the gateway, telemetry, and console
+services. Set `SENTRY_DSN` and `SENTRY_ENVIRONMENT` per service; only 5xx errors
+and uncaught exceptions are reported (no request bodies).

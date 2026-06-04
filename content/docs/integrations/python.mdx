@@ -1,0 +1,149 @@
+---
+title: Python SDK
+description: The base Interven Python SDK — Client, guard decorator, and gate function for any Python agent code.
+---
+
+The `interven` Python package is the base SDK. Use it directly when you don't have
+a framework-specific integration (no LangChain, no CrewAI, no OpenAI Assistants —
+just your own Python code calling APIs).
+
+## Install
+
+```bash
+pip install interven
+```
+
+The framework-specific packages (`interven-langchain`, `interven-openai-assistants`,
+`interven-computer-use`) all depend on this one.
+
+## Three patterns
+
+### 1. `Client.scan()` — explicit
+
+The most fundamental call. Scans any HTTP method/URL/body and returns a verdict.
+
+```python
+from interven import Client
+
+client = Client()  # reads INTERVEN_API_KEY / INTERVEN_GATEWAY_URL
+
+verdict = client.scan(
+    method="POST",
+    url="https://slack.com/api/chat.postMessage",
+    body={"channel": "#general", "text": "deploy key sk-proj-..."},
+)
+
+print(verdict.decision)        # ALLOW | DENY | SANITIZE | REQUIRE_APPROVAL
+print(verdict.reason_codes)    # ['SECRET_DETECTED', ...]
+print(verdict.risk_score)      # 0.0–1.0
+print(verdict.trace_id)        # UUID — find in Console → Activity
+```
+
+### 2. `guard` decorator — automatic
+
+Wrap any function so it's scanned before it runs. DENY raises
+`InterventBlockedError`. SANITIZE rewrites arguments to the redacted version.
+
+```python
+from interven import guard
+import requests
+
+@guard(api_key="iv_live_...", tool="slack", operation="post_message")
+def send_slack(channel: str, text: str):
+    requests.post(
+        "https://slack.com/api/chat.postMessage",
+        json={"channel": channel, "text": text},
+        headers={"Authorization": f"Bearer {SLACK_TOKEN}"},
+    )
+
+send_slack("#general", "release shipped")  # scanned automatically
+```
+
+### 3. `gate` one-liner — fine-grained
+
+You handle the decision in your own control flow:
+
+```python
+from interven import gate
+
+result = gate(
+    "POST",
+    "https://api.github.com/repos/org/repo/pulls",
+    body={"title": "feat: ...", "head": "feature", "base": "main"},
+    api_key="iv_live_...",
+)
+
+match result.decision:
+    case "ALLOW":
+        forward_to_github(result.body)
+    case "SANITIZE":
+        forward_to_github(result.sanitized_body)
+    case "DENY":
+        log_blocked(result.reason_codes)
+    case "REQUIRE_APPROVAL":
+        final = client.wait_for_approval(result.approval_id, timeout=300)
+        if final.status == "approved":
+            forward_to_github(result.body)
+```
+
+## Response-body scanning
+
+For read-then-write exfiltration detection and forensics, scan the upstream
+response after the call completes:
+
+```python
+upstream_resp = requests.get("https://internal.api/secrets/list").text
+
+client.scan_response(
+    trace_id=verdict.trace_id,
+    response_body=upstream_resp,
+    response_status=200,
+)
+```
+
+The response classification (data classes found, fields redacted) is attached to
+the original trace in Activity — search by trace ID to see the full picture.
+
+## Approval waiting
+
+When a scan returns `REQUIRE_APPROVAL`, your code can either poll manually via
+`GET /v1/approvals/[id]/status` or use the SDK helper:
+
+```python
+verdict = client.scan(...)
+if verdict.decision == "REQUIRE_APPROVAL":
+    final = client.wait_for_approval(
+        verdict.approval_id,
+        timeout=300,         # seconds; default 60
+        poll_interval=2.0,   # seconds between polls
+    )
+    if final.status == "approved":
+        # Proceed; gateway will short-circuit to ALLOW on retry
+        ...
+```
+
+## Environment variables
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `INTERVEN_API_KEY` | required | Your `iv_live_*` key |
+| `INTERVEN_GATEWAY_URL` | `https://api.intervensecurity.com` | Override for self-hosted |
+| `INTERVEN_AGENT_ID` | (none) | Override the API key's default agent for this process |
+| `INTERVEN_AGENT_NAME` | (none) | Human-readable agent name for telemetry |
+
+## Errors
+
+| Exception | When |
+|-----------|------|
+| `InterventBlockedError` | `guard`-decorated function denied |
+| `AuthenticationError` | API key missing, invalid, or revoked |
+| `RateLimitError` | Tenant rate limit hit (HTTP 429) |
+| `GatewayError` | Gateway returned 5xx after retries |
+
+## See also
+
+- [LangChain](/docs/integrations/langchain) — `@guard` on tools or callback-based
+- [LangGraph](/docs/integrations/langgraph) — drop-in tool-node replacement
+- [CrewAI](/docs/integrations/crewai) — guarded CrewAI tools
+- [OpenAI Assistants](/docs/integrations/openai-assistants) — `scan_tool_calls()`
+- [Browser Use / Computer Use](/docs/integrations/browser-use) — action-level guard

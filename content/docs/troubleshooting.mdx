@@ -1,0 +1,149 @@
+---
+title: Troubleshooting
+description: Common issues and how to fix them — by symptom.
+---
+
+If something behaves unexpectedly, scan this page first. Issues here come straight
+from real customer deploys.
+
+## Auth & connectivity
+
+### `401 Unauthorized` on every scan
+
+- API key not sent or formatted wrong. Header must be exactly
+  `Authorization: Bearer iv_live_...`.
+- Key revoked in Console → API Keys (check the "Last seen" + status column).
+- Key bound to a different tenant. Mint a new key in the tenant you're scanning
+  against.
+- IP allowlist enabled and your caller IP isn't on it (check the API Keys page —
+  blocked attempts are counted next to the key).
+
+### `connection refused` / DNS errors
+
+- Wrong `INTERVEN_GATEWAY_URL`. Default is `https://api.intervensecurity.com`.
+  Self-hosted: confirm Cloudflare Tunnel / reverse proxy is up; `curl /health`
+  directly.
+- Outbound firewall blocking your egress. Whitelist `api.intervensecurity.com`
+  on port 443.
+
+### `400 Bad Request`
+
+Body schema is wrong. Required fields: `method`, `url`. Body must be valid JSON.
+Common cause: passing the body as a string when the SDK expects an object, or
+vice-versa. Check the SDK reference for your language.
+
+## Decisions look wrong
+
+### Every call returns ALLOW even for obvious secrets
+
+- API key keyed to a tenant with no policies. Check Console → Policies — empty?
+  Either apply a starter pack (`sre.yaml`, `healthcare-hipaa.yaml`, etc.) or seed
+  defaults via the Console → Settings → Reset to defaults.
+- Gateway is stale (cached old `SECRET_PATTERNS`). Restart the stack on
+  self-hosted, or `curl /debug/build` to confirm `secret_patterns_hash` matches
+  expected.
+- Body classification only runs on JSON-shaped bodies. If the SDK sent the body
+  as a stringified blob, secrets in it won't be detected. Send the structured
+  object.
+
+### Clean URLs returning `REQUIRE_APPROVAL`
+
+Agent's trust score has degraded after repeated denies. Either reset it in
+Console → Agents → "Reset trust" or, self-hosted:
+
+```sql
+UPDATE agent_trust_state SET trust_score = 1.0, scrutiny_until = NULL
+WHERE agent_id = '<your-uuid>';
+```
+
+### `SANITIZE` returned but no `sanitized_body`
+
+You're on an older SDK version that doesn't deserialize that field. Upgrade
+(`pip install -U interven` / `npm i @interven/sdk-js@latest`).
+
+## Performance
+
+### High latency (p95 > 1s)
+
+- Threat-intel engine doing DNS lookups. Set `THREAT_INTEL_TIMEOUT_MS=200` and
+  reduce the number of enabled feeds, or disable threat-intel temporarily.
+- Postgres slow on self-hosted (`EXPLAIN ANALYZE` on `activity_log` insert).
+- Gateway running on a tiny VPS — minimum 1 vCPU / 1 GB RAM for production-ish
+  load.
+
+### `408 Request Timeout` on the SDK side
+
+Default SDK timeout is too tight for cold starts. Increase to 30s the first
+time. After warm-up, p50 is usually <80ms.
+
+## Approvals
+
+### Approval queued, but nothing happens
+
+- Slack interactivity URL not configured. Re-check Console → Alerts → Slack →
+  the **Request URL** must be `https://api.intervensecurity.com/v1/slack/interactions`
+  and the signing secret must match the Slack app's secret.
+- Approval expired. Default TTL is 10 minutes; bump via Console → Settings →
+  Approvals → "Default TTL".
+
+### Agent retries after approval but gets `REQUIRE_APPROVAL` again
+
+- Retry window passed (default 10 min after approval). The recent-approval
+  grant has expired; have the analyst approve again.
+- Retry came from a different agent ID. Grants are per-agent — make sure the
+  retry uses the same agent identity.
+
+## Framework-specific
+
+### Claude Code hook never fires
+
+- `.claude/settings.json` not in the project root, or the matcher pattern doesn't
+  include the tool you're using. Standard matcher:
+  `"matcher": "Bash|Write|Edit|WebFetch|mcp__.*"`.
+- Hook command timed out (default 15s). Increase `timeout_ms`.
+
+### LangChain `InterventCallback` doesn't see tool calls
+
+- Callback not threaded through. Pass it in `config={"callbacks": [cb]}`
+  on every `invoke()` — or use `RunnableConfig(callbacks=[cb])` once with
+  `with_config()`.
+- LangChain version too old. Requires `langchain-core >= 0.2`.
+
+### OpenClaw `hook never fires`
+
+- OpenClaw version < `2026.3.13`. Upgrade. Run `openclaw plugins doctor`.
+- Model not actually calling the tool. Small models skip tools when the system
+  prompt is bloated — see "Tuning" in the [OpenClaw integration page](/docs/integrations/openclaw).
+
+### MCP guard tools not visible in Claude Desktop / Cursor
+
+- `claude_desktop_config.json` malformed. Validate with `jq < claude_desktop_config.json`.
+- MCP server didn't start. Check Claude logs: `~/Library/Logs/Claude/` (macOS).
+- `INTERVEN_API_KEY` not exported to the MCP server's env block.
+
+## Self-hosted
+
+### Console loads but every API call returns 401
+
+BFF session cookie not set or `AIF_CONSOLE_SECRET` rotated without restarting all
+services. Restart all three services: gateway, telemetry, console.
+
+### `/debug/build` returns 404
+
+Stale local `npm run dev` gateway is bound to port 4000 instead of the Docker
+Compose gateway. Stop the local process and re-run `./infra/restart-stack.sh`.
+
+### Stripe webhook never lands
+
+- `STRIPE_WEBHOOK_SECRET` doesn't match the Stripe dashboard. Re-copy.
+- Webhook URL in Stripe dashboard doesn't resolve from the public internet
+  (Cloudflare Tunnel down, DNS not propagated).
+
+## Still stuck?
+
+- For hosted Interven: hello@intervensecurity.com (general) or
+  security@intervensecurity.com (security-sensitive).
+- For self-hosted: open an issue on
+  [github.com/intervensecurity/aif](https://github.com/intervensecurity/aif/issues).
+- Include: SDK version, gateway version (`curl /debug/build`), the trace_id of a
+  problematic scan, and what you expected vs what you saw.
