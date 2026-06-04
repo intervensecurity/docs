@@ -1,0 +1,13 @@
+{
+  "title": "Console",
+  "pages": [
+    "index",
+    "activity",
+    "agents",
+    "approvals",
+    "incidents",
+    "inbound-routes",
+    "api-keys",
+    "tool-credentials"
+  ]
+}

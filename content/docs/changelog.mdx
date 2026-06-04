@@ -1,0 +1,107 @@
+---
+title: Changelog
+description: What's new in Interven — gateway, SDKs, Console, integrations.
+---
+
+Material changes to the product. Behind-the-scenes refactors aren't listed.
+
+## v0.6.0 — June 2026
+
+### Highlights
+- **Multi-channel alerts** — Discord, Microsoft Teams, Telegram in addition to
+  Slack. SIEM export now supports CEF + OCSF natively.
+- **Per-API-key IP allowlists** — bind a key to a CIDR range; out-of-range calls
+  blocked at the edge before policy runs.
+- **Ephemeral keys** — short-lived, scope-restricted `iv_eph_*` keys (TTL +
+  max_uses + tool/verb whitelist). See [Ephemeral Keys](/docs/ephemeral-keys).
+- **Inbound Routes** — destination-side proxy for SaaS agents you don't control
+  (Salesforce Agentforce, HubSpot Breeze, Zendesk AI, Intercom Fin, GitHub
+  Copilot, Microsoft Copilot Studio, Sierra, Decagon). See [Inbound Routes](/docs/console/inbound-routes).
+- **PHI patterns in classifier** — MRN, NPI, DEA, ICD-10, CPT, MBI, DOB.
+  Bundled in the new `healthcare-hipaa.yaml` starter pack.
+- **AWS tag-aware policies** — match on resource tags (e.g. only apply approval
+  to `Environment=prod` resources).
+- **Auditor role** — read-only role with sensitive headers redacted; for SOC 2 /
+  PCI / HIPAA review windows. See [Team & Roles](/docs/admin/team-and-roles).
+- **Compliance evidence export** — single button at Settings → Audit Log → Export.
+
+### SDK
+- **`interven` Python** v0.6.x — adds `wait_for_approval()` + ephemeral-key
+  support + new `tool` / `operation` overrides on `guard` and `gate`.
+- **`@interven/sdk-js`** v0.5.x — `guard()` decorator + `gate()` one-liner +
+  `waitForApproval()` + TypeScript types exported.
+- **`interven-langchain`** v0.4.x — adds `[langgraph]` + `[langsmith]` extras
+  with native `interven_tool_node`, `guard_state_graph`, `scan_tool_call`, and
+  LangSmith span emission.
+- **`interven-openai-assistants`** v0.3.x — `scan_tool_calls` with `url_resolver`
+  override for custom tool names.
+- **`@interven/mcp-guard`** v0.4.x — proxy mode to wrap an existing MCP server.
+
+### Gateway
+- New endpoint `POST /v1/scan/response` for response-body classification (read →
+  write exfil correlation).
+- New endpoint `POST /v1/a2a/scan` for agent-to-agent message scanning.
+- New endpoint `POST /v1/policies/apply` for idempotent policy upserts (used by
+  `@interven/policy-cli`).
+- New endpoint `POST /v1/keys/ephemeral` for ephemeral-key minting.
+
+### Console
+- New pages: Inbound Routes, Tool Credentials, Compliance evidence export,
+  Environments, Auditor-role view of every page.
+- Setup wizard for first-time signups.
+
+### Policies
+- 7 starter policy packs shipped under `packages/policy-packs/`:
+  `sre-starter`, `vibe-coder-starter`, `hobbyist-starter`, `browser-agent-starter`,
+  `enterprise-oem-starter`, `healthcare-hipaa`, `iso-42001`.
+- `daily_budget` and numeric body-value conditions in the DSL.
+- Per-environment policy targeting (`env_names: ["production"]`).
+
+### Integrations
+- New: LangGraph, LangSmith, GitHub Copilot Coding Agent, Claude Code (PreToolUse
+  hook), Cursor, Microsoft Copilot Studio.
+
+### Compliance
+- SOC 2 Type II observation window opens, targeting Q4 2026 attestation.
+
+---
+
+## v0.5.x — Q1 2026
+
+- OIDC SSO (Google Workspace + Microsoft Entra ID).
+- Stripe self-serve billing with five tiers.
+- Sentry monitoring on all services.
+- Daily encrypted Postgres backups with off-site mirror.
+- Gateway CLI (`@interven/gateway`) URL-prefix proxy.
+- 14-day free trial on paid plans.
+
+---
+
+## v0.4.x — Q4 2025
+
+- LangChain + CrewAI + OpenAI Assistants first-party SDKs.
+- MCP guard (`@interven/mcp-guard`) for Claude Desktop / Cursor / Cline.
+- Threat intel from 6 free feeds (urlhaus, urlabuse, openphish, phishtank,
+  abuseipdb-free, alienvault-otx).
+- Initial OpenClaw plugin.
+- Browser Use / Computer Use shim (`interven-computer-use`).
+- Trust scoring per agent (PAM-style two-actor approval pattern).
+
+---
+
+## v0.3.x — Q2–Q3 2025
+
+- First public API + Bearer key auth.
+- Five built-in normalizers: GitHub, Slack, AWS, Google Drive, generic HTTP.
+- Initial Console (Activity, Agents, Policies, Approvals).
+- First version of the policy DSL (match + condition + action + priority).
+
+---
+
+## Subscribing to changes
+
+For a daily-or-less notification when something material ships:
+
+- **Email** — opt in at Settings → Notifications → "Product changelog"
+- **RSS** — `https://docs.intervensecurity.com/changelog.xml` (coming soon)
+- **GitHub releases** — [github.com/intervensecurity/aif/releases](https://github.com/intervensecurity/aif/releases)

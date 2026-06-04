@@ -1,0 +1,9 @@
+{
+  "title": "Admin",
+  "pages": [
+    "team-and-roles",
+    "billing",
+    "environments",
+    "rate-limits"
+  ]
+}

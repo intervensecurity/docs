@@ -1,0 +1,115 @@
+---
+title: Environments
+description: Separate dev / staging / production within a single Interven tenant — environment-scoped policies, separate API keys, and isolated audit feeds.
+---
+
+A single Interven tenant can host multiple **environments** — typically `dev`,
+`staging`, `production`, but you can name them whatever fits your release process.
+
+Environments give you:
+
+- **Policies scoped to an environment** — a strict rule in prod, a lax rule in dev
+- **API keys bound to one environment** — a leaked dev key can't reach prod data
+- **Separate audit feed per environment** — quieter staging signal, cleaner prod log
+- **Separate alert channels per environment** — `#interven-prod` vs `#interven-staging`
+
+For most small-team customers, one environment is enough. Once you have a real
+release process, environments become worth the setup.
+
+## Setup
+
+**Settings → Environments → Create environment.**
+
+| Field | Notes |
+|-------|-------|
+| Name | Lowercase, alphanumeric + dashes (`dev`, `staging`, `production`, `eu-prod`) |
+| Description | Free text |
+| Default scrutiny multiplier | Tighten or loosen the per-agent trust threshold for this env (e.g. `1.5` for prod = stricter) |
+
+Every tenant starts with a single environment called `default`. Existing API keys
+and policies stay attached to `default` when you create new environments — nothing
+moves implicitly.
+
+## Tagging an API key to an environment
+
+When you mint a key (`/api-keys/new`):
+
+- Pick an environment from the dropdown
+- The key includes the environment in its metadata; every scan it makes is
+  tagged with that environment in Activity and audit logs
+
+You can also override per-scan with an `env` field in the request body, but the
+default is to rely on the key's environment binding.
+
+## Policies per environment
+
+Each policy can target:
+
+- **All environments** (default — what most starter policies do)
+- **A specific environment list** (`["production"]`)
+
+In the policy JSON:
+
+```json
+{
+  "name": "Block force-push in production only",
+  "env_names": ["production"],
+  "rules": [
+    {
+      "match": { "tool_name": "github" },
+      "condition": { "body_contains_any": ["force-with-lease", "+refs/heads"] },
+      "action": "DENY",
+      "priority": 10
+    }
+  ]
+}
+```
+
+The same policy *name* can have a production-only and a staging-only version with
+different rules — the `env_names` field disambiguates which gets applied where.
+
+## Alert channels per environment
+
+When you configure an alert channel (`/alerts/new`), pick which environments it
+listens for. Recommended setup:
+
+- `#interven-prod-alerts` — `production` only, severity HIGH+
+- `#interven-staging-debug` — `staging` + `dev`, all severities
+- SIEM webhook — `production` only, all events
+
+Keeps the prod channel signal-to-noise high.
+
+## Listing & filtering
+
+Every environment-aware page in the Console (Activity, Approvals, Incidents,
+Policies, Agents, API Keys, Inbound Routes) gets an **environment filter** at the
+top. Defaults to "All" — switch to a specific environment to scope the view.
+
+Same filter is available via API:
+
+```bash
+curl -H "Authorization: Bearer iv_live_..." \
+  "https://api.intervensecurity.com/v1/traces?env=production&since=2026-06-01T00:00:00Z"
+```
+
+## Policy promotion workflow
+
+A common pattern teams use:
+
+1. **Author the policy in `dev`** — apply via CLI with `--env dev`
+2. **Watch Activity in dev** — confirm it does what you expect against real agent
+   traffic for a day or two
+3. **Promote to `staging`** — same CLI, `--env staging`
+4. **Watch staging** — same agents, more realistic data
+5. **Promote to `production`** — `--env production`
+
+The [policy-cli](/docs/policies#policy-as-code-cicd) treats `--env` as a first-class
+flag, so this fits cleanly into CI: separate Github Action jobs for each promotion
+step, behind code review.
+
+## Limits
+
+- Up to **10 environments** per tenant on Pro
+- Up to **3 environments** on Team
+- Solo and Free: 1 environment (`default`)
+- Enterprise: unlimited

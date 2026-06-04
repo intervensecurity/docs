@@ -1,0 +1,214 @@
+---
+title: Risk Signals
+description: The signals that feed the per-scan risk_score. What each engine looks at, what it contributes, and how to tune.
+---
+
+Every scan produces a `risk_score` in `[0.0, 1.0]` plus a `risk_band` (LOW / MED /
+HIGH / CRITICAL). The score is a weighted combination of signals from six engines.
+
+This page documents each engine — what it inputs, what it outputs, default weight,
+and how to tune.
+
+## How the score is computed
+
+```
+risk_score = clamp(
+  Σ (engine_weight[i] × engine_score[i]) + trust_modifier,
+  0, 1
+)
+```
+
+Where each `engine_score` is in `[0, 1]`, `engine_weight` is the tenant-configured
+weight (sums to ~1.0), and `trust_modifier` shifts the result based on the agent's
+trust score (penalize low-trust agents, gently reward high-trust ones).
+
+`risk_band` mapping (default — tunable):
+
+| Band | Range |
+|------|-------|
+| LOW | 0.00 – 0.29 |
+| MED | 0.30 – 0.59 |
+| HIGH | 0.60 – 0.84 |
+| CRITICAL | 0.85 – 1.00 |
+
+## The six engines
+
+### 1. Classifier
+
+**What it inputs:** the request body (JSON object, array, or string).
+**What it outputs:** detected data classes — `SECRETS`, `PII`, `PHI`, `INTERNAL`.
+**Score:** 0.0 if nothing detected; up to 1.0 if multiple classes hit + high severity (e.g. a long private key + PHI in same body).
+**Default weight:** 0.30 — the heaviest engine.
+
+Tune at **Settings → Risk Engines → Classifier**:
+
+- Per-class weight (`SECRETS` heavier than `INTERNAL`?)
+- Enable / disable individual patterns within a class
+- Add custom secret patterns (regex, scoped to your tenant)
+
+### 2. Baseline
+
+**What it inputs:** this agent's recent traffic.
+**What it outputs:** an anomaly score — how different is this call from the
+agent's normal pattern?
+**Score:** 0.0 if normal; up to ~0.8 for clear anomalies. Capped to leave room
+for other engines.
+**Default weight:** 0.15.
+
+Anomalies include:
+
+- New destination (URL host not seen before)
+- New operation (operation not seen for this tool)
+- Unusual time-of-day vs the agent's typical window
+- Unusual body size
+
+Baseline takes ~50 successful scans to build a per-agent model. Before that, only
+the "new destination" component fires.
+
+Tune at **Settings → Risk Engines → Baseline**:
+
+- Sensitivity (1–10; higher = more flagging)
+- Minimum-history threshold (default 50 scans)
+
+### 3. Correlation
+
+**What it inputs:** recent scans across the tenant (not just this agent).
+**What it outputs:** a pattern-match score for known dangerous sequences.
+**Score:** 0.0 if no pattern matches; up to 1.0 for the most dangerous patterns.
+**Default weight:** 0.15.
+
+Detected patterns:
+
+| Pattern | What it catches |
+|---------|-----------------|
+| Read-then-write exfil | Sensitive read → external destination write within 5 min |
+| Privilege escalation | IAM-create followed by policy-attach within 2 min |
+| Mass-action burst | ≥10 mutating calls to one tool in 1 min |
+| Token harvesting | Multiple distinct credentials touched in one agent's session |
+| Cross-agent collusion | Agent A reads → Agent B writes a correlated value |
+
+Tune at **Settings → Risk Engines → Correlation**: enable / disable per pattern.
+
+### 4. Threat Intel
+
+**What it inputs:** the destination URL host, IP, or any URL in the body.
+**What it outputs:** match score against six free feeds.
+**Score:** 0.0 if no match; 1.0 on any feed hit.
+**Default weight:** 0.20 — a hit alone is enough to push past HIGH.
+
+Feeds (default — toggle per-tenant):
+
+- **urlhaus** — abuse.ch malware URL list
+- **urlabuse** — phishing URL list
+- **openphish** — community phishing list
+- **phishtank** — phishing URL DB
+- **abuseipdb-free** — IP reputation
+- **alienvault-otx** — OSINT threat exchange
+
+Feeds refresh daily. Hits write to the incident system (auto-opens a
+`Threat-intel match` incident at default settings).
+
+Tune at **Settings → Risk Engines → Threat Intel**:
+
+- Enable / disable individual feeds
+- Add custom denylist URLs / IPs (your tenant's known-bad)
+- Add custom allowlist (suppress feed matches for known-clean URLs you control)
+
+### 5. Semantic
+
+**What it inputs:** the body text + the optional `context` field on the scan
+request.
+**What it outputs:** intent classification — "is this attempting an action whose
+intent matches a flagged category?"
+**Score:** 0.0–1.0 from a small classifier model.
+**Default weight:** 0.10.
+
+Flagged categories:
+
+| Category | Trigger |
+|----------|---------|
+| `EXFILTRATION` | Body or context suggests pulling data to an external destination |
+| `PRIVILEGE_ESCALATION` | Wording suggests granting elevated access |
+| `DESTRUCTIVE` | Wording suggests irrecoverable deletion |
+| `PROMPT_INJECTION` | Body contains common prompt-injection markers |
+| `LATERAL_MOVEMENT` | Body references multiple internal systems in a way that suggests pivot |
+
+Semantic is the least-deterministic engine. It's most useful for catching new
+attacks the rule-based engines miss; weight it low until you've tuned thresholds
+against your real traffic.
+
+Tune at **Settings → Risk Engines → Semantic**: per-category threshold, or
+disable entirely (drops weight to 0; other engines' weights re-normalize).
+
+### 6. Trust modifier
+
+**What it inputs:** the agent's current trust score (`agent_trust_state.trust_score`).
+**What it outputs:** a shift to the combined score.
+**Range:** −0.10 (high trust, modest discount) to +0.20 (low trust, significant
+penalty). Not capped at 0/1 — final score is clamped after.
+**Default weight:** Always applied; not a percentage.
+
+Why it's not a normal engine: trust modifies how seriously we take the other
+signals, rather than being an independent signal itself.
+
+See [Agents page](/docs/console/agents#trust-scoring) for what raises and lowers
+trust.
+
+## Viewing per-scan breakdown
+
+Every Activity trace's **Engines** tab shows:
+
+```
+Classifier        0.42  ✓ PII detected (email + SSN)
+Baseline          0.18  ✓ Unusual time-of-day (agent normally idle 22:00–06:00)
+Correlation       0.00
+Threat Intel      0.00
+Semantic          0.05  Mild EXFILTRATION lean
+Trust modifier    0.08  Agent trust 0.55 (scrutiny)
+────────────────────────────────────────────────────────
+Final risk_score  0.73 → HIGH
+```
+
+## Tuning weights
+
+Default weights are designed for typical SaaS-agent traffic. Tune at
+**Settings → Risk Engines → Weights**:
+
+- The 5 engine weights must sum to 1.0 (UI enforces this on save)
+- Trust modifier is independent (not part of the sum)
+- Test on Activity replay before saving — Settings → Risk Engines → "Replay last
+  24h" shows what the new weights would have decided for recent traffic
+
+## Disabling an engine
+
+Set its weight to 0. The other weights auto-re-normalize. The engine still runs
+(so you see its score in Activity for transparency) but its score doesn't affect
+the decision.
+
+Common reason to disable: noisy semantic engine on a tenant with a lot of
+prompt-engineering traffic.
+
+## Per-policy access
+
+You can target risk-engine output in a policy rule:
+
+```json
+{
+  "condition": { "risk_score_gt": 0.6 },
+  "action": "REQUIRE_APPROVAL"
+}
+```
+
+Or target specific signals:
+
+```json
+{
+  "condition": { "threat_intel_match": true },
+  "action": "DENY",
+  "incident_severity": "CRITICAL",
+  "action": "OPEN_INCIDENT"
+}
+```
+
+See [Policy DSL Reference](/docs/reference/policy-dsl#conditions) for all
+risk-related condition keys.

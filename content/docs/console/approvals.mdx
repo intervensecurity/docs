@@ -1,0 +1,126 @@
+---
+title: Approvals queue
+description: How the approval queue works in the Console — review high-risk actions, approve or deny, and complete the agent's task in the same conversation turn.
+---
+
+When a scan returns `REQUIRE_APPROVAL`, the gateway pauses the agent and creates an
+**approval record**. The agent then either:
+
+- Polls the gateway until an analyst decides (default), or
+- Returns the `approval_id` to the calling code, which decides how to wait
+
+Approvals can be decided in two places:
+
+- **The Console approvals queue** — `/approvals` (this page)
+- **Inline in Slack** — via the [Slack alert channel](/docs/alerts#slack-recommended-for-approvals)
+  with Approve / Deny buttons
+
+The Console queue is the fallback + the full audit log; Slack is the recommended
+operational surface for on-call analysts.
+
+## The list view
+
+`/approvals`
+
+Three tabs at the top:
+
+- **Pending** — awaiting decision
+- **Recent** — approved / denied / expired in the last N days
+- **Granted** — approvals whose 10-minute grant window is still active
+
+Each row shows:
+
+| Column | Notes |
+|--------|-------|
+| Age | Time since the agent requested |
+| Agent | Name + runtime |
+| Action | Tool · operation (e.g. `aws.terminate_instance`) |
+| Why | Reason codes (NEW_DESTINATION, SENSITIVE_DATA_EGRESS, …) |
+| Risk | Score + band |
+| Approve · Deny | Single-click buttons |
+| Open trace | Jump to the full Activity row |
+
+## The detail view
+
+Click any pending approval to see:
+
+- The full request body the agent intended to send
+- The risk score breakdown across all engines
+- The agent's recent history (last 24h, decision split)
+- The matched policies that produced `REQUIRE_APPROVAL`
+- A free-text **decision note** field — your reasoning is stored on the approval
+
+Decisions:
+
+- **Approve** — gateway short-circuits the agent's next identical retry within
+  10 minutes to ALLOW (`RECENT_APPROVAL_GRANT`).
+- **Deny** — the agent's retry fails again; the deny is logged as an active rule
+  for the next 10 minutes too (don't ask twice).
+- **Defer** — leave pending; useful when waiting on offline approver.
+
+## Lifecycle
+
+```
+1. Agent makes a scan          → REQUIRE_APPROVAL + approval_id
+2. Agent polls or waits
+3a. Analyst APPROVES           → grant_window = 10 min
+3b. Analyst DENIES             → deny_window  = 10 min
+3c. 10 min passes              → status = expired (agent gets a deny on its next poll)
+4. Agent retries within window → gateway short-circuits to ALLOW or DENY
+```
+
+Default windows are tunable per-tenant at **Settings → Approvals**:
+
+| Setting | Default | Range |
+|---------|---------|-------|
+| Pending TTL | 10 min | 1 min – 24 h |
+| Grant window after approve | 10 min | 1 min – 1 h |
+| Deny window after deny | 10 min | 1 min – 1 h |
+
+## Bulk decisions
+
+For burst incidents where many approvals stack up:
+
+- Select multiple rows → **Approve selected** / **Deny selected**
+- Filter by agent + reason code first to make sure you're not blanket-approving
+  the wrong thing
+
+Bulk decisions write the same audit metadata as individual ones; a single decision
+note applies to all rows.
+
+## SDK helper — `wait_for_approval`
+
+If your agent code wants to block until the analyst decides:
+
+```python
+verdict = client.scan(...)
+if verdict.decision == "REQUIRE_APPROVAL":
+    final = client.wait_for_approval(
+        verdict.approval_id,
+        timeout=300,         # seconds
+        poll_interval=2.0,
+    )
+    if final.status == "approved":
+        # The recent-grant short-circuit lets the next scan ALLOW
+        proceed_with_upstream(...)
+    else:
+        # denied or expired
+        log_blocked(...)
+```
+
+Or poll the status endpoint directly:
+
+```bash
+curl -H "Authorization: Bearer iv_live_..." \
+  https://api.intervensecurity.com/v1/approvals/<approval_id>/status
+# -> { "status": "pending" | "approved" | "denied" | "expired" }
+```
+
+## Why we don't ask the agent operator
+
+Letting the agent operator (whose account could be compromised, who could be
+careless, or who isn't security trained) approve their own risky actions makes
+Interven a logging tool, not a security control. Interven implements the
+**two-actor PAM pattern** used by BeyondTrust, CyberArk, and Teleport: the
+agent requests, a separate security analyst approves. The operator retries; the
+gateway recognizes the recent approval grant and lets the second attempt through.

@@ -127,11 +127,11 @@ In addition to the default tenant policies, Interven ships seven curated YAML
 
 | Pack | Use case |
 |------|----------|
-| `sre.yaml` | SRE / DevOps agents — destructive ops require approval, prod-tagged resources locked down |
-| `vibe-coder.yaml` | AI coding assistants — block secret commits, gate force-push, scan dependency installs |
-| `hobbyist.yaml` | Solo builders — secret egress + obvious-bad URL blocks; lightweight defaults |
-| `browser-agent.yaml` | Browser Use / Computer Use agents — block card/SSN form submits, threat-intel match on URLs |
-| `enterprise-oem.yaml` | OEM / platform integrators — strict tenant isolation, audit-heavy, opt-in by feature |
+| `sre-starter.yaml` | SRE / DevOps agents — destructive ops require approval, prod-tagged resources locked down |
+| `vibe-coder-starter.yaml` | AI coding assistants — block secret commits, gate force-push, scan dependency installs |
+| `hobbyist-starter.yaml` | Solo builders — secret egress + obvious-bad URL blocks; lightweight defaults |
+| `browser-agent-starter.yaml` | Browser Use / Computer Use agents — block card/SSN form submits, threat-intel match on URLs |
+| `enterprise-oem-starter.yaml` | OEM / platform integrators — strict tenant isolation, audit-heavy, opt-in by feature |
 | `healthcare-hipaa.yaml` | HIPAA-aligned — PHI patterns (MRN/NPI/DEA/ICD-10/CPT/MBI/DOB), BAA-friendly defaults |
 | `iso-42001.yaml` | EU AI Act / ISO 42001 alignment — model output classification, human-oversight triggers |
 
@@ -139,7 +139,7 @@ Apply via CLI:
 
 ```bash
 npx -y @interven/policy-cli apply \
-  --pack sre.yaml \
+  --pack sre-starter.yaml \
   --pack healthcare-hipaa.yaml \
   --env production
 ```

@@ -1,0 +1,319 @@
+---
+title: SDK Reference
+description: Method-by-method reference for the Python and JS/TS SDKs.
+---
+
+This is the formal reference. For usage patterns and getting-started examples,
+see [Python SDK](/docs/integrations/python) and
+[JavaScript / TypeScript](/docs/integrations/javascript).
+
+## Python: `interven`
+
+### `Client`
+
+The base client. Manages auth + HTTP transport.
+
+```python
+from interven import Client
+
+client = Client(
+    api_key="iv_live_...",        # default: env INTERVEN_API_KEY
+    gateway_url="https://...",    # default: env INTERVEN_GATEWAY_URL or hosted SaaS
+    timeout=30.0,                 # seconds; default 30
+    retries=2,                    # 5xx retries; default 2
+    agent_id="...",               # default: env INTERVEN_AGENT_ID
+    agent_name="...",             # default: env INTERVEN_AGENT_NAME
+)
+```
+
+### `Client.scan(...)`
+
+```python
+verdict = client.scan(
+    method: str,                            # required — "POST", "GET", etc.
+    url: str,                               # required — absolute upstream URL
+    body: Any = None,                       # request body (dict, list, str)
+    headers: dict | None = None,            # request headers
+    agent_id: str | None = None,            # override default agent
+    agent_name: str | None = None,
+    runtime_type: str | None = None,        # "langchain", "langgraph", etc.
+    context: str | None = None,             # conversation context for semantic engine
+    env: str | None = None,                 # override environment binding
+) -> ScanVerdict
+```
+
+Returns a `ScanVerdict`:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `decision` | `Literal["ALLOW", "DENY", "SANITIZE", "REQUIRE_APPROVAL"]` | |
+| `risk_score` | `float` | 0.0–1.0 |
+| `risk_band` | `Literal["LOW", "MED", "HIGH", "CRITICAL"]` | |
+| `reason_codes` | `list[str]` | e.g. `["SECRET_DETECTED", "EXTERNAL_PRINCIPAL"]` |
+| `trace_id` | `str` | UUID |
+| `tool_name` | `str` | e.g. `"slack"`, `"custom_proxy"` |
+| `operation` | `str` | e.g. `"post_message"` |
+| `classifications` | `list[str]` | `["SECRETS", "PII", "PHI", "INTERNAL"]` |
+| `signals` | `list[dict]` | Per-engine output |
+| `sanitized_body` | `Any \| None` | Present when decision is SANITIZE |
+| `approval_id` | `str \| None` | Present when decision is REQUIRE_APPROVAL |
+| `policy_id` | `str \| None` | First matched policy (others in `signals`) |
+| `policy_name` | `str \| None` | |
+
+### `Client.scan_response(...)`
+
+```python
+client.scan_response(
+    trace_id: str,                  # from the original scan
+    response_body: Any,             # upstream response (object or text)
+    response_status: int = 200,
+) -> ScanResponseResult
+```
+
+Returns `ScanResponseResult` with `data_classes`, `fields_redacted_count`, and
+`content_fingerprint`. Used for read-then-write exfil correlation.
+
+### `Client.wait_for_approval(...)`
+
+```python
+final = client.wait_for_approval(
+    approval_id: str,
+    timeout: float = 60.0,          # seconds
+    poll_interval: float = 2.0,     # seconds between polls
+) -> ApprovalResult
+```
+
+Blocks until the analyst decides or `timeout` elapses. Returns
+`ApprovalResult(status="approved" | "denied" | "pending" | "expired", reason=...)`.
+
+### `Client.mint_ephemeral_key(...)`
+
+```python
+result = client.mint_ephemeral_key(
+    ttl_seconds: int = 600,
+    max_uses: int = 1,
+    scope: dict | None = None,      # {"tools": [...], "verbs": [...]}
+    description: str | None = None,
+) -> EphemeralKey
+```
+
+Returns `EphemeralKey(key=..., ephemeral_id=..., expires_at=..., scope=...)`.
+The `key` field is the full key — shown **once**. See
+[Ephemeral Keys](/docs/ephemeral-keys).
+
+### `Client.health()`
+
+```python
+ok = client.health()  # -> bool
+```
+
+Returns True if the gateway is reachable + auth works.
+
+### `guard` decorator
+
+```python
+from interven import guard
+
+@guard(
+    api_key: str | None = None,           # default: env
+    tool: str | None = None,              # default: auto-detect from function name + body
+    operation: str | None = None,         # default: auto-detect
+    on_block: Literal["raise", "return_none"] = "raise",
+)
+def your_function(...):
+    ...
+```
+
+Scans the function's arguments against `/v1/scan`. On DENY, raises
+`InterventBlockedError` (or returns None if `on_block="return_none"`). On
+SANITIZE, the function is called with the redacted args.
+
+### `gate` one-liner
+
+```python
+from interven import gate
+
+result = gate(
+    method: str,
+    url: str,
+    body: Any = None,
+    headers: dict | None = None,
+    api_key: str | None = None,
+) -> ScanVerdict
+```
+
+Same return shape as `Client.scan()`. Useful for fire-and-handle code paths
+that don't want to hold a `Client` instance.
+
+### Exceptions
+
+| Exception | When |
+|-----------|------|
+| `InterventBlockedError` | `guard`-decorated function got a non-ALLOW decision |
+| `AuthenticationError` | API key invalid / missing / revoked |
+| `RateLimitError` | HTTP 429 returned |
+| `QuotaExceededError` | HTTP 429 with `QUOTA_EXCEEDED` reason |
+| `GatewayError` | HTTP 5xx after retries |
+| `TimeoutError` | Per-request timeout reached |
+
+All inherit from `InterventError`.
+
+---
+
+## JavaScript / TypeScript: `@interven/sdk-js`
+
+### `IntervenClient`
+
+```ts
+import { IntervenClient } from '@interven/sdk-js';
+
+const client = new IntervenClient({
+  apiKey: 'iv_live_...',                  // default: env INTERVEN_API_KEY
+  gatewayUrl: 'https://...',              // default: env INTERVEN_GATEWAY_URL or hosted
+  timeoutMs: 30_000,                      // default 30s
+  retries: 2,
+  agentId: '...',
+  agentName: '...',
+});
+```
+
+### `client.scan(...)`
+
+```ts
+const verdict = await client.scan({
+  method: string,
+  url: string,
+  body?: unknown,
+  headers?: Record<string, string>,
+  agentId?: string,
+  agentName?: string,
+  runtimeType?: string,
+  context?: string,
+  env?: string,
+});
+```
+
+Returns `ScanResponse`:
+
+```ts
+{
+  decision: 'ALLOW' | 'DENY' | 'SANITIZE' | 'REQUIRE_APPROVAL';
+  risk_score: number;
+  risk_band: 'LOW' | 'MED' | 'HIGH' | 'CRITICAL';
+  reason_codes: string[];
+  trace_id: string;
+  tool_name: string;
+  operation: string;
+  classifications: string[];
+  signals: Array<{ engine: string; score: number; details: any }>;
+  sanitized_body?: unknown;
+  approval_id?: string;
+  policy_id?: string;
+  policy_name?: string;
+}
+```
+
+### `client.scanResponse(...)`
+
+```ts
+await client.scanResponse({
+  traceId: string,
+  responseBody: unknown,
+  responseStatus?: number,
+});
+```
+
+### `client.waitForApproval(...)`
+
+```ts
+const final = await client.waitForApproval(approvalId, {
+  timeoutMs: 60_000,
+  pollIntervalMs: 2_000,
+});
+// -> { status: 'approved' | 'denied' | 'pending' | 'expired', ... }
+```
+
+### `client.mintEphemeralKey(...)`
+
+```ts
+const ek = await client.mintEphemeralKey({
+  ttlSeconds: 600,
+  maxUses: 1,
+  scope: { tools: ['slack'], verbs: ['WRITE'] },
+  description: 'One-shot Slack post',
+});
+// -> { key: 'iv_eph_...', ephemeralId, expiresAt, scope }
+```
+
+### `client.health()`
+
+```ts
+const ok = await client.health();  // boolean
+```
+
+### `guard` decorator
+
+```ts
+import { guard } from '@interven/sdk-js';
+
+const safe = guard(yourAsyncFn, {
+  apiKey: 'iv_live_...',           // default: env
+  tool: 'slack',                   // optional
+  operation: 'post_message',       // optional
+  onBlock: 'throw',                // 'throw' (default) or 'returnNull'
+});
+
+// throws GuardBlockedError on non-ALLOW (unless onBlock = 'returnNull')
+await safe(args);
+```
+
+### `gate` one-liner
+
+```ts
+import { gate } from '@interven/sdk-js';
+
+const result = await gate('POST', 'https://...', {
+  body: { ... },
+  apiKey: 'iv_live_...',
+});
+
+if (result.decision === 'ALLOW') {
+  // forward result.body to upstream
+}
+```
+
+### Error classes
+
+| Class | When |
+|-------|------|
+| `GuardBlockedError` | guard returned non-ALLOW |
+| `AuthenticationError` | 401 |
+| `RateLimitError` | 429 (rate) |
+| `QuotaExceededError` | 429 (quota) |
+| `GatewayError` | 5xx after retries |
+
+All inherit from `IntervenError`.
+
+### TypeScript types
+
+```ts
+import type {
+  Decision,
+  RiskBand,
+  ScanResponse,
+  GateResult,
+  IntervenClientOptions,
+  GuardOptions,
+  EphemeralKeyOptions,
+  ApprovalStatus,
+} from '@interven/sdk-js';
+```
+
+---
+
+## See also
+
+- [Python SDK getting started](/docs/integrations/python)
+- [JavaScript / TypeScript getting started](/docs/integrations/javascript)
+- [API reference](/docs/api-reference) — for direct HTTP integration
+- [Migration guide](/docs/migration) — moving between SDK versions

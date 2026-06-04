@@ -1,0 +1,124 @@
+---
+title: Billing & Plans
+description: How billing works, what your plan includes, how to upgrade or downgrade, and what happens if you exceed your scan quota.
+---
+
+Billing is handled by **Stripe**. Card details, invoices, and tax forms all live
+in the Stripe customer portal — accessible from the Console.
+
+## Plans
+
+See [intervensecurity.com/pricing](https://intervensecurity.com/pricing) for the
+canonical comparison. Quick summary:
+
+| Plan | Price | Scans / month | Agents | Users | Audit retention |
+|------|-------|---------------|--------|-------|-----------------|
+| Free | $0 | 1,000 | 1 | 1 | 7 days |
+| Solo | $19/mo | 50,000 | 3 | 1 | 30 days |
+| Team | $49/mo | 200,000 | 10 | 5 | 90 days |
+| Pro | $199/mo | 1,000,000 | Unlimited | 10 | 365 days |
+| Enterprise | Custom | Unlimited | Unlimited | Unlimited | Per contract |
+
+Each plan unlocks additional features (multi-channel alerts on Solo+, SIEM export
+on Team+, AWS tag-aware policies + multi-region residency on Pro+, BAA + dedicated
+CSM on Enterprise). SAML / SCIM provisioning is on the Enterprise roadmap — contact
+sales if it's a procurement blocker. See the pricing page for the full matrix.
+
+## Where to manage your plan
+
+**Console → Settings → Billing.** What you can do:
+
+- See current plan + usage vs limits this period
+- Upgrade or downgrade (effective immediately; pro-rated)
+- Update payment method (opens the Stripe customer portal)
+- Download invoices (Stripe portal)
+- Update billing email / VAT ID / company address
+- Cancel — your plan stays active until the end of the paid period
+
+## Usage tracking
+
+The **Usage** card on the Billing page shows:
+
+- Scans consumed this period (with day-by-day chart)
+- Percentage of quota used
+- Forecast for end-of-period based on current run-rate
+- Top 5 agents by call volume (so you can identify cost drivers)
+
+Same data is exposed via API:
+
+```bash
+curl -H "Authorization: Bearer iv_live_..." \
+  https://api.intervensecurity.com/v1/usage
+```
+
+Response includes current-period totals, plan limits, and forecast.
+
+## What happens at 100% of quota
+
+- **80%** — you get an email warning
+- **100%** — new scans return HTTP 429 with `reason: QUOTA_EXCEEDED`. The
+  gateway logs the attempt but does not run policy + risk (we don't want to
+  bill you for what we couldn't enforce).
+- **Until period reset** — either upgrade your plan or wait for the monthly reset.
+
+We **never silently bill overages**. You see the warning, you make the call.
+
+Need higher volume but want to keep flowing past the limit? Switch on **Overage
+billing** at Settings → Billing → "Allow overages." Then scans past the limit are
+billed at the next-tier per-scan rate (shown in the Console). Off by default.
+
+## Free trials
+
+Every paid plan starts with a **14-day free trial** when you sign up via
+[app.intervensecurity.com/signup?plan=team](https://app.intervensecurity.com/signup?plan=team)
+(or `solo` / `pro`). No credit card required to start; you enter payment on day 14
+to continue.
+
+If you don't enter payment, you drop to Free automatically — no data loss, just
+the lower quota and shorter retention.
+
+## Plan changes mid-period
+
+- **Upgrading** — effective immediately. You're charged the prorated difference
+  on the next invoice.
+- **Downgrading** — effective at the end of the current period. You keep the
+  higher tier's features until renewal.
+
+Switching is one click — no sales call required for self-serve tier moves.
+
+## Cancellation
+
+**Settings → Billing → Cancel plan.**
+
+You're moved to Free at the end of the current paid period:
+
+- Audit data retained per the **Free** retention window (7 days from cancellation)
+- API keys remain active but enforce the Free plan quota
+- All policies, agents, integrations remain — you can re-upgrade and pick up
+  where you left off
+
+To delete your tenant entirely (GDPR right-to-erasure), email
+privacy@intervensecurity.com. Confirmed deletion within 30 days.
+
+## Enterprise contracts
+
+Enterprise plans are negotiated per-customer. They typically include:
+
+- Custom scan / agent / user limits (often unlimited)
+- Contracted SLA (up to 99.9%)
+- Custom data residency
+- Self-hosted option
+- Signed BAA, DPA, MSA
+- Volume discounts on overages
+- Dedicated CSM
+- Direct Slack channel for support
+
+Contact sales@intervensecurity.com to start.
+
+## Tax & compliance
+
+- We charge VAT / GST / sales tax based on your billing address (Stripe handles
+  this automatically).
+- W-9 / W-8BEN are available on request for US Enterprise customers.
+- Invoices include all standard fields procurement teams need (PO number,
+  custom reference, etc. configurable in Stripe portal).

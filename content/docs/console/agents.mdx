@@ -1,0 +1,99 @@
+---
+title: Agents page
+description: View every agent calling Interven, manage per-agent trust scores, and set agent-specific policy overrides.
+---
+
+The **Agents** page lists every identity that has called Interven on your tenant.
+"Agent" here is the caller side of any scan — usually one per LLM agent process,
+but can also be one per workflow, one per microservice, or one per ephemeral
+session.
+
+## The list view
+
+`/agents`
+
+| Column | Notes |
+|--------|-------|
+| Name | Set on signup or via SDK's `agent_name` field |
+| Runtime | langchain, langgraph, crewai, openai_assistants, mcp, openclaw, custom |
+| Total calls | Lifetime; sortable |
+| Decisions (24h) | Stacked split: ALLOW / DENY / SANITIZE / REQUIRE_APPROVAL |
+| Trust score | 0.00–1.00; color-coded |
+| Last seen | Relative time |
+
+Filters: by runtime type, by trust band, by activity in last N hours.
+
+## The detail view
+
+Click any agent to open its full profile:
+
+### Header
+- Agent name + UUID
+- Created date + first-seen date
+- Runtime type
+- API key prefix (never the full key)
+
+### Trust score panel
+- Current score with trend line over the last 30 days
+- Last 5 events that moved the score (deny, approval, threat-intel hit, clean streak)
+- **Reset trust** button — sets score back to 1.0 and clears scrutiny window
+- **Set custom scrutiny** — manually pin trust low for a quarantine window
+
+### Activity panel
+- Calls / hour over last 24h with decision color-banding
+- Top 10 tools called
+- Reason-code distribution for non-ALLOW decisions
+
+### Policy overrides
+You can attach agent-specific policy rules that override the tenant defaults for
+this agent only. Common uses:
+- Test a stricter rule against one agent before rolling out tenant-wide
+- Loosen a rule for a single trusted batch process
+- Quarantine — deny-all for a compromised agent without affecting others
+
+Per-agent policies are evaluated **before** tenant-wide policies. DENY at any
+level wins.
+
+## Trust scoring
+
+Every agent starts at 1.0. The score moves continuously based on its behavior.
+
+### What lowers trust
+- DENY decisions
+- Threat-intel matches
+- Anomaly detections (baseline + correlation)
+- Operator denies in the approval queue
+
+### What recovers trust
+- Clean ALLOW streak (default: 50 consecutive non-DENY)
+- Successful approvals (analyst approved, agent retried OK)
+- Time decay (slow upward drift on inactivity)
+
+### Why it matters
+When trust is below the threshold (default: 0.6) the agent enters **scrutiny mode**:
+- Required-approval thresholds tighten — calls that would normally ALLOW may go to
+  REQUIRE_APPROVAL
+- Some risk signals weight higher for this agent
+- The agent flag appears in Activity with a yellow "scrutiny" badge
+
+Scrutiny mode is meant to be self-clearing — keep clean and trust recovers. For
+manual recovery use **Reset trust**.
+
+## Custom agent identification
+
+When you mint an API key, it's bound to a default agent. You can override per-scan
+with the `agent_id` or `agent_name` field in the request body — useful when:
+
+- One key serves many agents (multi-tenant SaaS where the agent is the end-user)
+- An ephemeral agent (one-shot script) needs its own scrutiny scope
+- Logical grouping for analytics (`agent_name=langgraph-fintech-prod` vs
+  `agent_name=langgraph-fintech-staging`)
+
+See the [API reference](/docs/api-reference#post-v1scan) for the request schema.
+
+## API access
+
+- `GET /v1/agents` — list agents with filters
+- `GET /v1/agents/{agent_id}` — single agent
+- `POST /v1/agents/{agent_id}/trust/reset` — reset trust to 1.0
+- `POST /v1/agents/{agent_id}/scrutiny` — set custom scrutiny window

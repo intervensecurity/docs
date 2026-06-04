@@ -1,0 +1,161 @@
+---
+title: Migration & Upgrade Guides
+description: How to move between SDK versions safely. Breaking changes per release.
+---
+
+Interven follows semver-ish:
+
+- **Patch** (`0.6.0 → 0.6.1`) — bug fixes, no API change
+- **Minor** (`0.5.x → 0.6.x`) — additive features; deprecations begin
+- **Major** (`0.x → 1.0`) — breaking changes; migration guide below
+
+Until we hit `1.0` (targeted with SOC 2 Type II), minor bumps occasionally include
+small breaking changes — always called out in the per-release notes here.
+
+## How to upgrade safely
+
+1. **Check the per-release section below** for breaking changes
+2. **Read the new behavior** — typically a deprecated path + a new preferred path
+3. **Migrate one service at a time** — your tenant supports multiple SDK versions
+   simultaneously (a v0.5 client and a v0.6 client can call the same gateway)
+4. **Verify in your dev environment** — see [Environments](/docs/admin/environments)
+5. **Promote** — staging, then production
+
+The gateway itself is forward-compatible: new request fields are accepted and
+unknown fields are ignored. Older SDK versions keep working — they just don't see
+the new response fields until you upgrade.
+
+---
+
+## v0.5 → v0.6 (Python `interven`)
+
+### What changed
+
+#### Added (non-breaking)
+- `Client.wait_for_approval(approval_id, timeout, poll_interval)` — convenience
+  helper for blocking until an analyst decides
+- `guard()` decorator now accepts `tool=` and `operation=` for explicit attribution
+  (auto-inference still works)
+- New verdict fields: `risk_band`, `signals[]`, `policy_id`, `policy_name`,
+  `sanitized_body` (always present, even on non-SANITIZE — just `None`)
+
+#### Deprecated (still works in v0.6, removed in v0.7)
+- `Client.scan_secret_only()` — replaced by passing `body=` to `Client.scan()`
+  with whatever shape you have; the gateway now classifies any payload shape
+- `verdict.is_blocked` (property) — use `verdict.decision in ("DENY", "REQUIRE_APPROVAL")`
+
+#### Behavior change
+- `Client()` without arguments now reads `INTERVEN_GATEWAY_URL` (was
+  `INTERVEN_GATEWAY` in v0.5). The old name still works; we'll drop it in v0.7.
+
+### Migration steps
+
+```bash
+pip install -U interven
+```
+
+Then:
+
+- If you use `scan_secret_only()` — replace with `scan(method=..., url=..., body=...)`
+- If you check `verdict.is_blocked` — switch to the explicit decision compare
+- If you set `INTERVEN_GATEWAY` env var — rename to `INTERVEN_GATEWAY_URL`
+
+If you don't use any of these, the upgrade is drop-in.
+
+---
+
+## v0.5 → v0.6 (`@interven/sdk-js`)
+
+### What changed
+
+#### Added (non-breaking)
+- `guard()` decorator wrapping any async function
+- `gate()` one-liner for scan-and-decide
+- `IntervenClient.waitForApproval()` helper
+- `IntervenClient.scanResponse()` for read → write exfil correlation
+- TypeScript types exported from the package root
+
+#### Deprecated (still works, removed in v0.7)
+- `Interven` class — renamed to `IntervenClient`. Import alias still works:
+
+  ```ts
+  import { Interven } from '@interven/sdk-js';  // deprecated
+  import { IntervenClient } from '@interven/sdk-js';  // preferred
+  ```
+
+### Migration steps
+
+```bash
+npm install @interven/sdk-js@latest
+```
+
+Then:
+
+- Rename `import { Interven }` to `import { IntervenClient }`
+- Optionally adopt `guard()` / `gate()` for simpler call sites
+
+---
+
+## v0.5 → v0.6 (`interven-langchain`)
+
+### Added
+- LangGraph extras: `pip install 'interven-langchain[langgraph]'`
+- LangSmith extras: `pip install 'interven-langchain[langsmith]'`
+- New helpers under `interven_langchain.langgraph`:
+  - `interven_tool_node` — drop-in replacement for `ToolNode`
+  - `guard_state_graph` — bolt-on guard for compiled graphs
+  - `scan_tool_call` — explicit per-call API
+
+### Behavior change
+- `InterventCallback` now defaults to `on_block="raise"` (was `"return_message"`
+  in v0.5). If you relied on the old default, set explicitly:
+
+  ```python
+  InterventCallback(api_key=..., on_block="return_message")
+  ```
+
+---
+
+## v0.5 → v0.6 (`@interven/mcp-guard`)
+
+### Added
+- **Proxy mode** — wrap an existing MCP server so all its tool calls get scanned
+  without the client having to know:
+
+  ```bash
+  npx @interven/mcp-guard proxy -- npx @your-org/your-mcp-server
+  ```
+
+### No breaking changes — direct upgrade.
+
+---
+
+## v0.5 → v0.6 (`interven-openai-assistants`)
+
+### Added
+- `url_resolver` parameter on `scan_tool_calls()` for custom tool-name → URL
+  mapping
+- Better function-name pattern detection (handles `gh_*`, `slack_*`, `drive_*`,
+  `fetch_*`)
+
+### No breaking changes — direct upgrade.
+
+---
+
+## Gateway-side compatibility matrix
+
+| SDK version | Gateway version | Supported until |
+|-------------|-----------------|-----------------|
+| `interven` ≥ 0.4.x | ≥ 0.4 | indefinitely (oldest minor we test against) |
+| `interven` < 0.4 | — | unsupported — please upgrade |
+| `@interven/sdk-js` ≥ 0.3.x | ≥ 0.4 | indefinitely |
+| `@interven/sdk-js` < 0.3 | — | unsupported |
+
+If you're on an unsupported version, the gateway logs `STALE_SDK_VERSION` in your
+Activity feed. Functionally it still works; you just don't get the newest fields.
+
+## Get help
+
+If you're moving across a major bump on a complex deploy and want a sanity check
+before you ship, email founder@intervensecurity.com with a sketch of your setup —
+we'll review and call out anything we'd watch for.

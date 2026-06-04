@@ -1,0 +1,192 @@
+---
+title: Glossary
+description: Plain-English definitions of every term that shows up in Interven docs, Console, and API responses.
+---
+
+## A
+
+**Agent** — An identity calling Interven. Usually one per LLM agent process. Each
+has a UUID, a runtime type, optional name, and a trust score.
+
+**Agent runtime type** — The framework or platform an agent runs on. Possible
+values: `langchain`, `langgraph`, `crewai`, `openai_assistants`, `mcp`,
+`openclaw`, `claude_code`, `cursor`, `browser_use`, `computer_use`, `custom`.
+
+**ALLOW** — One of four decisions. Forward the request to the real upstream.
+
+**Approval** — An open request record created when a scan returns `REQUIRE_APPROVAL`.
+Lives in the queue until an analyst decides or it expires (default 10 min).
+
+**Approval grant window** — Time after an analyst approves during which the
+agent's retry auto-allows (default 10 min). Same for deny grants.
+
+**Auditor** — A read-only Console role designed for SOC 2 / PCI / HIPAA reviewers
+during a review window. Sees Activity, Approvals (history), Incidents, Policies,
+audit log export — never Tool Credentials, API Keys, or Alerts config.
+
+## B
+
+**Baseline engine** — Risk-scoring engine that compares the current scan to the
+agent's recent behavioral pattern. Flags new destinations, new operations,
+unusual time-of-day, unusual body size.
+
+**Body** — The payload of an outbound request. Interven classifies this for
+secrets / PII / PHI / INTERNAL before applying policies.
+
+## C
+
+**Classifier** — Risk engine that detects data classes in the body. Returns
+`SECRETS`, `PII`, `PHI`, `INTERNAL`, or empty.
+
+**Console** — The Interven web app at `app.intervensecurity.com` — Activity,
+Approvals, Policies, Agents, Incidents, Settings.
+
+**Correlation engine** — Risk engine that detects patterns across multiple recent
+scans (read-then-write exfil, privilege escalation, mass-action burst, etc.).
+
+**Custom proxy** — Default tool name for any URL that doesn't match a built-in
+normalizer. Still gets classification + risk scoring + policy.
+
+## D
+
+**Decision** — One of `ALLOW`, `DENY`, `SANITIZE`, `REQUIRE_APPROVAL`. The output
+of a scan.
+
+**DENY** — Decision that blocks the call. Trace logged with reason codes. May
+auto-open an incident.
+
+## E
+
+**Engine** — One of six risk-scoring systems: Classifier, Baseline, Correlation,
+Threat Intel, Semantic, Trust modifier. Each contributes to the final risk_score.
+
+**Environment** — A named scope within a tenant (`dev`, `staging`, `production`,
+etc.). Policies, API keys, and alert channels can be environment-scoped.
+
+**Ephemeral key** — Short-lived API key (`iv_eph_*`) with TTL + max_uses +
+optional tool/verb scope. Auto-revokes on expiry or exhaustion.
+
+## H
+
+**HMAC** — The `/invoke` and `/mcp` endpoints use HMAC-signed requests with a
+60-second replay window. Used by primary agent integrations where the SDK
+shares a per-agent secret with the gateway.
+
+## I
+
+**`iv_eph_*`** — Ephemeral key prefix.
+
+**`iv_live_*`** — Long-lived API key prefix.
+
+**Inbound Route** — A configured `/inbound/<prefix>/...` URL Interven exposes for
+SaaS agents to call instead of the real upstream. Interven scans, then forwards
+with stored credentials.
+
+**Incident** — An auto-opened (or manually opened) record flagging suspicious or
+high-severity activity. Has a severity, a timeline of linked traces, response
+actions, and a resolution code.
+
+## M
+
+**Match** — In a policy rule, the part that says *which* scans the rule applies
+to. Empty match = all scans.
+
+**MCP** — Model Context Protocol. Anthropic's open spec for tool servers.
+Interven exposes a `/mcp` endpoint and ships `@interven/mcp-guard` for
+intercepting MCP traffic.
+
+## N
+
+**Normalizer** — Per-tool code that extracts the `operation` and other structured
+fields from a raw HTTP request. Built-in for 30+ tools (GitHub, Slack, AWS, etc.).
+
+## O
+
+**OPEN_INCIDENT** — A policy action that combines DENY with auto-opening an
+incident at a specified severity.
+
+**Operation** — The semantic action within a tool. Examples: `post_message`,
+`create_pr`, `terminate_instance`. Derived from URL + method + body.
+
+## P
+
+**PHI** — Protected Health Information. Interven detects: MRN, NPI, DEA, ICD-10,
+CPT, MBI, DOB.
+
+**PII** — Personally Identifiable Information. Email, SSN, card numbers, etc.
+
+**Policy** — A named set of rules that determine ALLOW / DENY / SANITIZE /
+REQUIRE_APPROVAL for matching scans.
+
+**Policy pack** — A curated YAML bundle of policies for a use case (SRE, healthcare
+HIPAA, ISO 42001, etc.). Apply with `@interven/policy-cli`.
+
+**Priority** — In a rule, lower number = evaluated first. Strictness escalation
+still overrides: a DENY in any matching rule beats an ALLOW.
+
+## R
+
+**`reason_codes`** — Per-decision codes explaining *why*. Examples:
+`SECRET_DETECTED`, `EXTERNAL_PRINCIPAL`, `NEW_DESTINATION`, `RATE_LIMITED`.
+
+**`REQUIRE_APPROVAL`** — Decision that pauses the agent and creates an approval
+record for analyst review.
+
+**`risk_band`** — Decision-friendly bucket of `risk_score`: `LOW` / `MED` / `HIGH`
+/ `CRITICAL`.
+
+**`risk_score`** — Combined output of all risk engines, in `[0.0, 1.0]`.
+
+**Runtime type** — See **Agent runtime type**.
+
+## S
+
+**`SANITIZE`** — Decision that redacts sensitive fields and forwards the cleaned
+payload. The SDK gets a `sanitized_body` to use in place of the original.
+
+**Scan** — One evaluation of a tool call by Interven. Inputs: method, URL, body,
+identity context. Outputs: a decision + reason codes + risk score + trace_id.
+
+**Scrutiny mode** — A state an agent enters when trust drops below threshold.
+Policies are tighter; some ALLOWs become REQUIRE_APPROVALs.
+
+**Semantic engine** — Risk engine that uses a small classifier model to detect
+intent categories: EXFILTRATION, PRIVILEGE_ESCALATION, DESTRUCTIVE,
+PROMPT_INJECTION, LATERAL_MOVEMENT.
+
+**Severity** — `LOW` / `MEDIUM` / `HIGH` / `CRITICAL`. Used on incidents and
+alerts; not the same as `risk_band` (severity is human-assignable, risk_band
+is computed).
+
+**Signals** — Per-engine output for a scan, surfaced in Activity for forensics.
+
+## T
+
+**Tenant** — A customer's isolated workspace in Interven. Has its own users,
+agents, policies, alert channels, environments.
+
+**Threat intel engine** — Risk engine that matches URLs / IPs in the request
+against six free feeds (urlhaus, urlabuse, openphish, phishtank, abuseipdb-free,
+alienvault-otx).
+
+**Tool** — A destination service the agent calls — Slack, GitHub, Salesforce, etc.
+Each has a built-in normalizer (or falls back to `custom_proxy`).
+
+**Tool Credentials** — The encrypted vault of upstream secrets Interven uses when
+forwarding inbound-route traffic. AES-256-GCM at rest.
+
+**`trace_id`** — UUID assigned to each scan. Use to correlate across SDK logs,
+Activity feed, alerts, and SIEM exports.
+
+**Trust score** — Per-agent `[0.0, 1.0]` value. Lowered by denies / threat-intel /
+anomalies. Raised by clean streaks. Below threshold (default 0.6), the agent
+enters scrutiny mode.
+
+## V
+
+**Verbs** — `READ` / `WRITE` / `ADMIN` — a coarse categorization of what an
+operation does. Use in policies to target "all writes" or "all admin" without
+listing every operation.
+
+**Verdict** — The Python/JS SDK's name for the returned `ScanResponse`. Same
+shape as the API response.

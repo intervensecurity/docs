@@ -1,0 +1,110 @@
+---
+title: Team & Roles
+description: Invite users to your Interven tenant. Choose between Admin / Developer / Reviewer / Auditor roles.
+---
+
+Every tenant supports multiple users with role-based access. Set up at **Settings →
+Team Management**.
+
+## Roles
+
+| Role | Read | Write | Best for |
+|------|------|-------|----------|
+| **Admin** | Everything | Everything (users, billing, env, integrations) | Tenant owners / security leads |
+| **Developer** | Activity, agents, policies, tools, API keys (own only), inbound routes | Policies, tools, own API keys | Engineers integrating agents |
+| **Reviewer** | Activity, approvals, incidents, agents, policies (read), inbound routes (read) | Approvals (approve / deny), incident notes & transitions | On-call security analysts |
+| **Auditor** | Activity (with sensitive headers redacted), approvals (history), incidents (history), policies, agents, tools, audit log + compliance evidence export | Nothing — every mutation endpoint returns 403 | SOC 2 / PCI / HIPAA auditors during a review window |
+
+Role checks run at both the BFF (Console) and the gateway (API) layers — there is no
+client-side-only protection.
+
+## Inviting users
+
+`/settings/team/invite`
+
+1. **Email** — must be valid; can be any provider unless you've restricted via OIDC SSO
+2. **Role** — pick one (you can change later)
+3. **Send invite** — they receive an email with a link to set their password
+
+The invite link is single-use and expires in 7 days. Re-invite if needed.
+
+## OIDC SSO (optional)
+
+When configured, only users with email addresses on the configured domain(s) can
+sign in via OIDC. Configure at **Settings → SSO**:
+
+- **Google Workspace** — provide the OIDC client ID + client secret + allowed domain
+- **Microsoft Entra ID** — provide the tenant ID + client ID + client secret
+
+Once SSO is on, you can still keep the password fallback for break-glass accounts.
+
+> SAML / SCIM provisioning is on the Enterprise roadmap. Contact sales if it's a
+> procurement blocker.
+
+## What each role can't do
+
+### Developer can't:
+- Invite / remove users
+- Change billing / plan
+- Mint API keys for other users' default agents
+- Modify the tenant audit-log retention window
+- See or rotate tool credentials
+
+### Reviewer can't:
+- Modify policies (only read)
+- Mint or revoke API keys
+- Edit or revoke inbound routes
+- See full unredacted sensitive headers in traces
+
+### Auditor can't:
+- Mutate anything (every POST/PATCH/DELETE returns 403)
+- See **Tool Credentials**, **API Keys** management, or **Alerts** configuration in the sidebar
+- See the full value of any secret-class header
+
+## The Auditor role in practice
+
+When SOC 2 / PCI / HIPAA auditors need read-only access to your tenant during a
+review:
+
+1. Settings → Team → Invite
+2. Email: their email
+3. Role: **Auditor**
+4. Send a separate notice that you've granted access (the auditor confirms before
+   logging in)
+5. After the review is over, revoke their access
+
+What they see:
+
+- ✅ Activity, Decisions, Traces, Approvals (history), Incidents (history), Policies,
+  Agents, Tools, Inbound Routes (read), Settings → Audit Log → **Compliance evidence
+  export**
+- ❌ Tool Credentials, API Keys management, Alerts config, Settings → Team / Billing
+- ❌ Every mutation endpoint — including "approve this approval" — returns 403
+
+The auditor pulls their own evidence. You don't have to export and email files.
+
+## Audit of role changes
+
+Every role assignment, role change, user invite, and user removal writes a row to
+the audit log with:
+
+- Operator (the admin who made the change)
+- Target user
+- Old role → new role
+- Timestamp
+
+This is part of the standard audit log export.
+
+## API access
+
+Team management has API endpoints if you need to provision programmatically — for
+example to invite users from your IDP via a cron:
+
+- `GET /v1/users` — list tenant users
+- `POST /v1/users/invite` — send invite
+- `PATCH /v1/users/{id}/role` — change role
+- `DELETE /v1/users/{id}` — remove access
+
+These endpoints require Admin role + a separate admin-scoped API key (mint at
+Settings → Team → "Admin API key"). Standard `iv_live_*` keys do not have team
+mutation scope.

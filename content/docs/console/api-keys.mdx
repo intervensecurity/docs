@@ -1,0 +1,124 @@
+---
+title: API Keys
+description: Mint, list, rotate, revoke Bearer API keys (iv_live_*) — with IP allowlists, per-key usage, and ephemeral variants.
+---
+
+API keys are how anything outside the Console authenticates to Interven. Two
+formats:
+
+- **`iv_live_*`** — long-lived Bearer keys. Used for the scan API, SDKs, Gateway CLI.
+- **`iv_eph_*`** — ephemeral keys. Short-lived (default 10 min), scope-restricted,
+  auto-revoke. See [Ephemeral Keys](/docs/ephemeral-keys) for the dedicated guide.
+
+## The list view
+
+`/api-keys`
+
+| Column | Notes |
+|--------|-------|
+| Name | Set on creation; e.g. `prod-langgraph`, `staging-mcp` |
+| Prefix | First 12 chars of the key (the full key is shown **once** on creation) |
+| Type | `live` / `ephemeral` |
+| Default agent | Which agent identity calls on this key default to |
+| IP allowlist | Configured CIDR ranges (or "any") |
+| Last seen | Most recent successful call |
+| Calls (24h) | Volume |
+| Status | `active` / `revoked` / `expired` (ephemeral only) |
+| Actions | Edit · Revoke |
+
+## Creating a key
+
+`/api-keys/new`
+
+Fields:
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| Name | yes | Human-readable; used in audit logs |
+| Default agent | yes | Pick existing or create; per-scan `agent_id` override is still allowed |
+| IP allowlist | optional | CIDR list; calls from other IPs get HTTP 403 *before* policy runs |
+| Description | optional | Free text |
+
+Save → the full key reveals **once**. Copy it immediately to your secrets manager.
+If you lose it, mint a new one — the original cannot be re-shown.
+
+## IP allowlist (recommended for production)
+
+Adding a CIDR allowlist hard-binds a key to specific egress IPs. A leaked key used
+from any other address gets blocked at the edge — the policy + risk pipeline never
+even runs.
+
+Common setups:
+
+| Pattern | When |
+|---------|------|
+| VPC NAT egress | Production agent fleet behind a known NAT |
+| GitHub-actions IP range | Self-hosted runners or GitHub Actions calling Interven |
+| Office IP | Test / staging keys |
+| `0.0.0.0/0` | Wide open — only for dev keys you'll rotate fast |
+
+The "Blocked attempts" counter on each key surfaces IP allowlist hits. If a
+production key ever shows non-zero, treat it as a possible compromise.
+
+## Rotation
+
+Best practice:
+
+1. Mint a new key with the same name + IP allowlist (e.g. `prod-langgraph-v2`)
+2. Roll your secrets manager to the new key
+3. Wait for the old key's "calls (24h)" to drop to zero (your service has cut over)
+4. Revoke the old key
+
+Cutover is zero-downtime — both keys are valid until you revoke the old one.
+
+## Revocation
+
+Revoke from the Console (one-click) or via API:
+
+```bash
+curl -X DELETE https://api.intervensecurity.com/v1/keys/<key_id> \
+  -H "Authorization: Bearer iv_live_<another-key>"
+```
+
+Revoked keys 401 immediately on the next call. Audit log keeps the key's history
+forever (you can see the last call, the revocation operator, etc.).
+
+## What's stored vs what's hashed
+
+| Thing | Stored as |
+|-------|-----------|
+| Key material | One-way hash; the full key cannot be recovered from the DB |
+| Name + description | Plaintext (per-tenant scoped) |
+| IP allowlist | Plaintext (operationally needed for edge enforcement) |
+| Usage counters | Plaintext aggregates |
+| Audit log | Includes prefix + operator + timestamp — never the full key |
+
+A database leak does not leak usable keys.
+
+## Programmatic minting
+
+For self-service flows where you mint keys for downstream customers, use the admin
+key endpoint. This is self-host-only by default; hosted customers should use the
+Console UI.
+
+```bash
+# Self-host admin endpoint (requires INTERVEN_API_KEYS_ADMIN_SECRET)
+curl -X POST https://your-self-hosted/v1/keys \
+  -H "Authorization: Bearer <admin-secret>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant_id": "...",
+    "name": "scoped-customer-key",
+    "default_agent_id": "..."
+  }'
+```
+
+If you need programmatic minting on hosted Interven, contact sales@intervensecurity.com.
+
+## Common errors
+
+| HTTP | Meaning | Fix |
+|------|---------|-----|
+| 401 INVALID_KEY | Key missing, malformed, or revoked | Re-mint and roll secrets |
+| 403 IP_NOT_ALLOWED | Caller IP not on the key's allowlist | Add the IP or rotate to a key with broader allowlist |
+| 429 RATE_LIMITED | Per-key (or per-tenant) rate limit hit | See [Rate Limits](/docs/admin/rate-limits) |

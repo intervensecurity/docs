@@ -1,0 +1,134 @@
+---
+title: Inbound Routes
+description: Destination-side proxy for protecting SaaS AI agents you don't control — Salesforce Agentforce, HubSpot Breeze, Zendesk AI, Intercom Fin, Sierra, Decagon, Microsoft Copilot Studio.
+---
+
+An **inbound route** is the configuration that lets a SaaS-hosted AI agent send its
+API calls through Interven instead of directly to your real backend. Interven scans,
+then forwards — with stored credentials the agent never sees.
+
+This is the only viable Interven integration for agents that run inside vendor
+clouds and don't accept SDK or middleware injection.
+
+> If you're integrating an agent you *can* modify (LangChain, your own service),
+> use one of the [framework integrations](/docs/integrations/python) or the
+> [Gateway CLI](/docs/integrations/gateway-cli) instead. Inbound Routes are
+> specifically for closed-runtime SaaS agents.
+
+## How it works
+
+```
+SaaS Agent (Salesforce, HubSpot, Zendesk, ...)
+   │
+   │ configured to call Interven URL
+   ▼
+┌──────────────────────────────────────────────┐
+│  Interven Inbound Gateway                    │
+│  https://api.intervensecurity.com/inbound/   │
+│       <your-prefix>/<path>                   │
+│                                              │
+│  1. Match path to route                      │
+│  2. Identify calling agent                   │
+│  3. Run full policy + risk pipeline          │
+│  4. Decide ALLOW / DENY / SANITIZE / REQUIRE │
+│  5. Forward to real upstream with stored     │
+│     credentials                              │
+└──────────────────────────────────────────────┘
+   │
+   │ with real Bearer token
+   ▼
+Real upstream (Slack / GitHub / DB / API)
+```
+
+The agent never holds the real credential — Interven does. You revoke or rotate
+in one place.
+
+## The list view
+
+`/inbound-routes`
+
+| Column | Notes |
+|--------|-------|
+| Path prefix | The unique segment after `/inbound/` (e.g. `sf-slack`) |
+| Upstream URL | Where Interven forwards on ALLOW |
+| Tool name | Optional — pinned for policy attribution (e.g. `slack`) |
+| Agent | Default agent attribution for calls on this route |
+| Active | Toggle to enable/disable without deleting |
+| Calls (24h) | Volume + decision split |
+
+## Creating a route
+
+`/inbound-routes/new`
+
+Fields:
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| Path prefix | yes | Letters/digits/dashes; unique per tenant; max 32 chars |
+| Upstream URL | yes | Absolute base URL (e.g. `https://slack.com/api`); paths after the prefix are appended |
+| Upstream headers | optional | Auth headers Interven adds when forwarding (Authorization, X-API-Key, etc.) — encrypted at rest |
+| Tool name | optional | One of: built-in normalizer name, `custom_proxy`, or your own custom tool ID |
+| Default agent | optional | Which agent identity gets credited for calls on this route |
+| Allowed methods | optional | Restrict to GET / POST / etc. |
+| Allowed path patterns | optional | Restrict paths after the prefix (e.g. `/api/v1/{customers,orders}/*`) |
+
+Save → the route URL becomes `https://api.intervensecurity.com/inbound/<prefix>/...`.
+Point your SaaS agent at this URL.
+
+## Stored credentials
+
+Credentials added to a route's "Upstream headers" are:
+
+- **Encrypted at rest** with `INTERVEN_CREDENTIAL_ENCRYPTION_KEY` (AES-256-GCM)
+- **Never returned** in API or UI reads — only the field name is shown after save
+- **Rotatable** without disrupting in-flight requests
+- **Audited** — every credential change is logged with operator identity
+
+To rotate, edit the route → enter the new value → save. The old credential is
+purged from active config immediately.
+
+## Per-platform setup guides
+
+| Platform | Guide |
+|----------|-------|
+| Salesforce Agentforce | [salesforce](/docs/saas-agents/salesforce) |
+| HubSpot Breeze | [hubspot](/docs/saas-agents/hubspot) |
+| Zendesk AI Agents | [zendesk](/docs/saas-agents/zendesk) |
+| Intercom Fin | [intercom](/docs/saas-agents/intercom) |
+| GitHub Copilot Coding Agent | [github-copilot](/docs/saas-agents/github-copilot) |
+| Microsoft Copilot Studio | [microsoft-copilot](/docs/saas-agents/microsoft-copilot) |
+| Sierra | [sierra](/docs/saas-agents/sierra) |
+| Decagon | [decagon](/docs/saas-agents/decagon) |
+
+## Decision behavior
+
+| Decision | SaaS agent sees |
+|----------|-----------------|
+| `ALLOW` | Real upstream's response, transparently |
+| `DENY` | HTTP 403 with reason codes |
+| `SANITIZE` | Real upstream's response (Interven forwarded redacted body) |
+| `REQUIRE_APPROVAL` | HTTP 202 with `approval_id`; the next retry within 10 min auto-allows after analyst approves |
+
+Every response from an inbound route includes:
+
+- `X-Interven-Decision` — the decision string
+- `X-Interven-Trace-Id` — UUID for telemetry correlation
+- `X-Interven-Reasons` — comma-separated reason codes (when present)
+
+## Security model
+
+- **The route is a customer-controlled URL prefix.** It cannot redirect to an
+  arbitrary destination; only the upstream URL set at config time is reachable.
+- **Stored credentials never leave the gateway.** They're injected into the
+  outbound forward and stripped from any response surface.
+- **Per-tenant isolation.** Routes are scoped to your tenant; another tenant
+  cannot send traffic to your inbound route URL.
+- **Audit log captures the full request.** Body, headers (minus Authorization),
+  decision, forwarded status — searchable in Activity.
+
+## API access
+
+- `GET /v1/inbound-routes` — list
+- `POST /v1/inbound-routes` — create
+- `PATCH /v1/inbound-routes/{id}` — edit
+- `DELETE /v1/inbound-routes/{id}` — remove

@@ -1,0 +1,132 @@
+---
+title: Activity & Traces
+description: How to read, filter, and export the trace explorer — the audit surface for every governed agent action.
+---
+
+Every scan Interven evaluates writes a trace to the **Activity** page. This is where
+you investigate any decision after the fact: who called, what they tried, what we
+decided, why, and what happened next.
+
+## The list view
+
+`/activity`
+
+One row per scan, newest first. Each row shows:
+
+| Column | Notes |
+|--------|-------|
+| Time | Local + UTC on hover |
+| Agent | Name + runtime_type (langchain, mcp, openai_assistants, …) |
+| Tool · operation | Detected from URL + method + body (e.g. `slack.post_message`) |
+| Decision | `ALLOW` · `DENY` · `SANITIZE` · `REQUIRE_APPROVAL` |
+| Risk | Score 0.0–1.0 with band badge (LOW / MED / HIGH / CRITICAL) |
+| Reason codes | First two; click to see all |
+
+Filters at the top:
+
+- **Agent** — single or multi-select
+- **Tool / operation** — multi-select
+- **Decision** — pick any combination
+- **Risk band** — LOW / MED / HIGH / CRITICAL
+- **Time range** — quick-pick (15m / 1h / 24h / 7d) or custom
+- **Free-text** — matches against trace_id, agent_name, reason_codes
+
+## The detail view
+
+Click any row to open the full trace.
+
+### Header
+
+- **trace_id** — UUID; copy with one click; also queryable via `GET /v1/traces/{id}`
+- Decision badge + reason codes
+- Quick links: matched policies, linked approval (if any), linked incident (if any)
+
+### Request panel
+
+The original scan input as Interven received it:
+
+- `method` + `url` + `headers` (sensitive headers redacted in display)
+- `body` — pretty-printed JSON or text
+- `runtime_type` if provided
+- API key identifier (prefix only, never the full key)
+
+### Decision panel
+
+- Reason codes with descriptions
+- Risk score breakdown — each signal's contribution
+- Sanitized body (if `SANITIZE`) — diff view against original
+- Approval link (if `REQUIRE_APPROVAL`)
+
+### Engines panel
+
+Each detection / risk engine that fired, with its individual contribution:
+
+| Engine | What it does |
+|--------|--------------|
+| Classifier | Secrets / PII / PHI / INTERNAL pattern matches |
+| Baseline | Anomaly vs this agent's normal traffic |
+| Correlation | Patterns across recent calls (read-then-write, burst, etc.) |
+| Threat Intel | URL or IP matches against 6 feeds |
+| Semantic | Intent classification on the body / prompt context |
+| Trust | Current per-agent trust modifier |
+
+### Matched policies
+
+The policies whose `match` + `condition` evaluated true on this scan, sorted by
+priority. Click any policy to jump to its definition.
+
+### Response (if `scan_response` was called)
+
+For traces where the upstream response was also classified (read-then-write
+correlation), the response panel shows the data classes found and any redactions
+applied.
+
+## Export
+
+Top-right of the page: **Export current view**.
+
+| Format | Use for |
+|--------|---------|
+| NDJSON | Streaming ingestion (Datadog Logs, Sumo Logic) |
+| CSV | Spreadsheets, ad-hoc analysis |
+| Splunk HEC | Direct paste-into-HTTP-event-collector format |
+| Datadog Logs | Datadog logs intake JSON |
+| OCSF | OCSF-formatted security finding events |
+
+Exports honor your current filters and time range. For continuous SIEM shipping
+prefer the webhook-mode export — see [Alerts](/docs/alerts).
+
+## Retention
+
+Audit traces are retained per your plan:
+
+| Plan | Retention |
+|------|-----------|
+| Free | 7 days |
+| Solo | 30 days |
+| Team | 90 days |
+| Pro | 365 days |
+| Enterprise | Per contract (typically 2 years) |
+
+Configure your tenant's specific retention window at **Settings → Audit Log →
+Retention Period**. The retention prune job runs daily.
+
+## API access
+
+Every Activity view has an equivalent API:
+
+- `GET /v1/traces` — list with filters
+- `GET /v1/traces/{trace_id}` — single trace with full detail
+- `GET /v1/decisions/export` — bulk export with the same filter surface
+
+See the [API reference](/docs/api-reference) for parameters.
+
+## Privacy & security
+
+- **Headers** flagged as sensitive (Authorization, X-API-Key, cookies) are displayed
+  redacted in the Console UI but are stored in full for forensics. Auditor-role users
+  see redacted only.
+- **Body content** is stored verbatim — that's the point of an audit log. If your
+  tenant routes data subject to a deletion request, use the retention controls or
+  submit a DELETE to privacy@intervensecurity.com.
+- **Trace IDs** are random UUIDs — safe to share in support tickets or with auditors.

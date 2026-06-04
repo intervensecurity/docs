@@ -1,0 +1,164 @@
+---
+title: Console — first 10 minutes
+description: Sign-in to first protected scan, with a tour of every Console page along the way.
+---
+
+After signing up at [app.intervensecurity.com/signup](https://app.intervensecurity.com/signup),
+this is the path that gets you from cold start to a live protected scan, with a tour of
+every Console page worth knowing.
+
+## 1. Land on the Setup wizard
+
+The first time you sign in, the Console drops you on a guided setup wizard. It walks
+you through:
+
+1. Confirming your company + tenant name
+2. Picking a starter policy pack (SRE / Healthcare HIPAA / Browser Agent / etc.)
+3. Minting your first API key
+4. Running a test scan from your terminal to confirm enforcement works
+
+You can skip the wizard and come back to it any time — every step is also available as
+a normal Console page. The wizard is just the recommended order.
+
+## 2. Dashboard — the firehose
+
+`/` (or **Dashboard** in the sidebar)
+
+What you see at a glance:
+
+- **Scan volume + decision split** — calls/min, share of ALLOW / DENY / SANITIZE / REQUIRE_APPROVAL
+- **Risk distribution** — how risk-banded the recent traffic is (LOW / MED / HIGH / CRITICAL)
+- **Recent activity** — last N scans with decision and tool name
+- **Recent approvals + incidents** — anything that needs eyes-on
+
+Click any tile to drill into the matching filtered view.
+
+## 3. Activity — every scan, every decision
+
+`/activity` · [full page](/docs/console/activity)
+
+The most important page in the Console for forensics. One row per scan, newest first.
+Each row clicks open to a full trace showing:
+
+- The full request that was scanned
+- The decision and reason codes
+- Which policies matched
+- Which detection engines fired and what they scored
+- Body classification (SECRETS / PII / PHI / INTERNAL)
+- Linked approval (if REQUIRE_APPROVAL) or incident (if auto-opened)
+
+Filter by agent, tool, decision, risk band, or trace ID. Export the current view as
+NDJSON / CSV / Splunk / Datadog / OCSF.
+
+## 4. Agents — who's calling, and how much can you trust them
+
+`/agents` · [full page](/docs/console/agents)
+
+Lists every agent that has hit your gateway, with:
+
+- Total calls + decision split
+- Last-seen timestamp
+- Current trust score (0.0–1.0)
+- Risk-band over the last 24h
+
+Click an agent to see its full history, set per-agent policy overrides, or **reset
+trust** if a noisy spell pushed it into scrutiny mode.
+
+## 5. Approvals — the analyst queue
+
+`/approvals` · [full page](/docs/console/approvals)
+
+When a scan returns `REQUIRE_APPROVAL`, the request lands here. You can:
+
+- See the full request and risk context
+- Approve or deny with one click
+- See the agent's recent history to inform the decision
+
+Approve in Slack instead (recommended): see [Alerts](/docs/alerts) for the
+interactive-button setup. The Console queue is the fallback / audit log.
+
+## 6. Policies — what gets allowed, denied, sanitized
+
+`/policies` · [full page](/docs/policies)
+
+Browse, edit, or create policies. Two edit modes:
+
+- **Form mode** — guided pickers for the common case
+- **Raw JSON mode** — multiple rules per policy, full DSL
+
+Or manage policies as YAML in git with the [policy-cli](/docs/policies#policy-as-code-cicd).
+
+## 7. Tools — the tool catalog
+
+`/tools`
+
+Every tool Interven has a normalizer for (GitHub, Slack, AWS, Salesforce, Stripe, …).
+Click a tool to see the operations Interven recognizes, the URLs that map to it, and
+any default policies that target it. You can add custom operations here for policy
+authoring.
+
+## 8. Incidents — when something flagged itself
+
+`/incidents` · [full page](/docs/console/incidents)
+
+Auto-opened by the gateway when a single scan hits a high-severity threshold, or when
+correlated activity matches an incident pattern (e.g. repeated denies from one agent).
+Each incident links back to the triggering trace(s).
+
+## 9. Inbound Routes — protect SaaS agents you don't control
+
+`/inbound-routes` · [full page](/docs/console/inbound-routes)
+
+For Salesforce Agentforce, HubSpot Breeze, Zendesk AI, Intercom Fin, Sierra, Decagon,
+Microsoft Copilot Studio. Define a path prefix + upstream URL + stored credentials;
+point the SaaS agent at the Interven URL; every call gets scanned before forwarding.
+
+## 10. API Keys — mint / rotate / revoke
+
+`/api-keys` · [full page](/docs/console/api-keys)
+
+Mint `iv_live_*` keys for agents. Each key supports:
+
+- Per-key **IP allowlist** (CIDR ranges)
+- Default agent identity it represents
+- Usage counter + last-seen
+- Manual revoke
+
+For one-shot or short-lived access, mint **ephemeral keys** instead — see [Ephemeral
+Keys](/docs/ephemeral-keys).
+
+## 11. Tool Credentials — the upstream-secrets vault
+
+`/tool-credentials` · [full page](/docs/console/tool-credentials)
+
+Stored credentials Interven uses when forwarding inbound-route traffic. Encrypted at
+rest with `INTERVEN_CREDENTIAL_ENCRYPTION_KEY`. Rotate, revoke, attribute per route.
+
+## 12. Alerts — where decisions get surfaced
+
+`/alerts` · [Alerts docs](/docs/alerts)
+
+Configure Slack (with interactive Approve/Deny buttons), Discord, Microsoft Teams,
+Telegram, or SIEM webhook (CEF / OCSF / JSON). Per-channel event filters + severity
+thresholds.
+
+## 13. Settings — the rest
+
+`/settings`
+
+- **Team & Roles** — invite users, set roles (Admin / Developer / Auditor / Reviewer).
+  See [Team & Roles](/docs/admin/team-and-roles).
+- **Billing** — current plan, usage, upgrade / downgrade, payment method. See
+  [Billing](/docs/admin/billing).
+- **Environments** — dev / staging / production separation. See
+  [Environments](/docs/admin/environments).
+- **Audit Log retention** — choose your retention window per your written policy.
+- **Compliance evidence export** — for auditors; date range + format.
+
+## What's next
+
+- New to Interven? Run the [Quickstart](/docs/quickstart) — first scan in 5 lines.
+- Already integrated and want to dig deeper? Skim the [Activity page](/docs/console/activity)
+  guide and the [Policy DSL reference](/docs/reference/policy-dsl).
+- Setting up for compliance? Start with [Compliance](/docs/compliance) and
+  [Team & Roles](/docs/admin/team-and-roles).

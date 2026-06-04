@@ -1,0 +1,108 @@
+---
+title: Incidents
+description: Auto-opened security incidents — what triggers one, how to investigate, how to close.
+---
+
+An **incident** in Interven is a flagged sequence of agent activity that warrants
+operator attention. They're created automatically by the gateway when a scan (or a
+correlated burst of scans) crosses a severity threshold.
+
+Incidents complement the per-scan Activity log: Activity shows everything that
+happened; Incidents shows what should be looked at.
+
+## What auto-opens an incident
+
+| Trigger | Threshold (default — tunable) |
+|---------|-------------------------------|
+| Single CRITICAL-band scan | One CRITICAL DENY |
+| Repeated DENYs from one agent | ≥5 DENYs in 1 hour |
+| Threat-intel match | Any URL/IP hit on a feed |
+| Read-then-write exfil pattern | Sensitive read → external write in 5 min |
+| Trust score collapse | Agent score drops > 0.3 in 1 hour |
+| Ephemeral-key scope violation | Any EPHEMERAL_SCOPE_VIOLATION |
+
+Operators can also **manually open** an incident from any Activity trace
+("Create incident from this trace") — handy when the auto-rules missed something
+your analyst caught visually.
+
+## The list view
+
+`/incidents`
+
+| Column | Notes |
+|--------|-------|
+| Opened | Relative time |
+| Title | Generated from the trigger (e.g. "Threat-intel match — urlhaus") |
+| Severity | LOW / MEDIUM / HIGH / CRITICAL |
+| Agent | The triggering agent |
+| Status | `open` / `investigating` / `closed` |
+| Linked traces | Count |
+
+Filters: severity, status, agent, time range.
+
+## The detail view
+
+Click any incident to see:
+
+### Header
+- Title + severity badge
+- Opened timestamp + auto-trigger that created it (or "manually opened by X")
+- Current status with **state transitions**: open → investigating → closed
+
+### Timeline
+Every trace linked to the incident, in chronological order. Each row clicks to
+its Activity detail. Helpful for read-then-write patterns where multiple scans
+together form the picture.
+
+### Response actions
+The auto-actions the gateway took (if any) when opening the incident:
+
+- Agent trust score lowered
+- Per-agent scrutiny pinned for N hours
+- Tenant-wide alert sent on configured channels
+
+You can add more actions:
+
+- **Suspend agent** — temporary deny-all for that agent until you unsuspend
+- **Rotate API key** — revoke the agent's current key, force re-mint
+- **Notify channel** — send a one-off alert (Slack / Discord / Teams) with the
+  incident summary
+- **Open ticket** — push to your ticket system if configured (Jira / Linear)
+
+### Notes
+Free-text. Append-only. Every analyst's notes are stamped + auditable.
+
+## Closing an incident
+
+`closed` status accepts a required **resolution code**:
+
+| Code | When |
+|------|------|
+| `false_positive` | The detection misfired; agent behavior was legitimate |
+| `agent_misbehavior` | Agent did the thing, was correctly stopped, no further action |
+| `agent_compromised` | Agent was malicious / compromised; credentials rotated |
+| `policy_gap` | Policy didn't catch what it should have; policy updated |
+| `infrastructure` | Triggered by a misconfiguration / outage, not real malicious activity |
+
+The resolution code drives the analytics dashboard's false-positive ratio and
+helps tune detection thresholds over time.
+
+## Tuning incident triggers
+
+`/settings/incidents`
+
+Each trigger threshold can be adjusted per-tenant:
+
+- Tighten if you're missing real incidents
+- Loosen if you're getting noise
+
+Be careful with **threat-intel match** — that's the threshold that catches
+known-bad URLs / IPs. We recommend keeping it at "any hit."
+
+## API access
+
+- `GET /v1/incidents` — list with filters
+- `GET /v1/incidents/{id}` — single incident with timeline
+- `POST /v1/incidents` — manually open an incident from one or more trace_ids
+- `POST /v1/incidents/{id}/transition` — change status (open → investigating → closed)
+- `POST /v1/incidents/{id}/notes` — append a note

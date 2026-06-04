@@ -1,0 +1,132 @@
+---
+title: Fail-open vs Fail-closed
+description: When Interven is unreachable, should your agent keep going or hard-stop? Strategy guide for choosing per integration.
+---
+
+If Interven is unreachable (network blip, gateway down, scan timeout), your agent
+faces a binary choice:
+
+- **Fail-open** — proceed with the action without policy enforcement
+- **Fail-closed** — block the action; treat unreachable as DENY
+
+This page is the canonical guide on choosing between them. Defaults across SDKs
+and plugins are listed at the bottom.
+
+## The trade-off
+
+| | Fail-open | Fail-closed |
+|---|-----------|-------------|
+| **If Interven is down** | Agent keeps working | Agent stops |
+| **Risk** | A dangerous action could slip through | A safe action gets blocked unnecessarily |
+| **Right when** | The agent has its own safety net, or downtime cost > occasional missed scan | The agent has tool access where one missed scan is unrecoverable (deletion, money movement) |
+
+There's no universally right answer — it depends on the blast radius of the
+action you're protecting.
+
+## Recommended defaults
+
+| Agent / context | Recommended | Why |
+|-----------------|-------------|-----|
+| Internal dev / staging | Fail-open | Don't break developer flow |
+| Production SaaS-customer-facing | Fail-closed | Protect customers; downtime is a known recoverable mode |
+| Fintech / money movement | **Fail-closed**, always | One missed scan can move money irrecoverably |
+| Healthcare / PHI | **Fail-closed**, always | One missed scan can leak PHI irrecoverably |
+| SRE agents touching prod infra | Fail-closed | Destructive ops with no undo |
+| Coding agents (Claude Code, Cursor) | Fail-open | Preserves UX during dev; the agent has its own undo (git) |
+| Customer-support chat agents | Fail-open with alert | Don't break chat UX; raise a Sev-2 incident if Interven is down |
+| Browser agents | Fail-closed for form submits, fail-open for reads | Differentiate by action class |
+
+## How to configure
+
+### SDKs (Python `interven`, JS `@interven/sdk-js`)
+
+```python
+client = Client(
+    api_key="...",
+    fail_closed=True,   # default: False
+    timeout=10.0,       # seconds; on timeout fail-open or fail-closed per setting
+)
+```
+
+```ts
+const client = new IntervenClient({
+  apiKey: '...',
+  failClosed: true,            // default: false
+  timeoutMs: 10_000,
+});
+```
+
+When `fail_closed=True`:
+- 5xx after retries → SDK raises `GatewayError` (don't catch silently)
+- Timeout → SDK raises `TimeoutError`
+- Network unreachable → SDK raises connection error
+
+When `fail_closed=False` (default):
+- All of the above → SDK returns a synthesized `ScanVerdict` with
+  `decision="ALLOW"`, `reason_codes=["GATEWAY_UNREACHABLE"]`. Your code can still
+  detect this case and choose to block locally.
+
+### Plugins / hooks
+
+| Integration | Env var | Default |
+|-------------|---------|---------|
+| `@interven/claude-code-hook` | `INTERVEN_FAIL_CLOSED=1` | fail-open (`0`) |
+| `@interven/copilot-hook` | `INTERVEN_FAIL_CLOSED=1` | fail-open (`0`) |
+| `@interven/mcp-guard` | `INTERVEN_FAIL_OPEN=1` | fail-closed (`0`) |
+| `@interven/gateway` CLI | `--fail-closed` flag | fail-open |
+| `openclaw-interven-guard` | `failClosedOnTimeout: true` in plugin config | fail-open |
+
+Yes, the polarity differs across plugins — historical reason. Standardizing to
+`INTERVEN_FAIL_CLOSED=1` is on the roadmap; for now follow the table above.
+
+### Inbound Routes (SaaS agent destination-side proxy)
+
+Per-route setting at **Console → Inbound Routes → Edit → Failure mode**:
+
+- `ALLOW` (default) — on Interven internal error, forward to upstream with NO
+  scan. Logged as `GATEWAY_INTERNAL_ERROR`.
+- `BLOCK` — return HTTP 503 to the SaaS agent. Agent treats as transient + retries.
+
+For regulated environments and any healthcare / fintech route, set `BLOCK`.
+
+## Alerts on fail-* events
+
+Whichever you choose, configure an alert for the failure mode itself:
+
+**Console → Alerts → Add channel → Events → "Gateway internal error"**
+
+Get a Sev-2 page when Interven is degraded. Even if your agents are fail-open,
+you want to know — and your SLO / on-call needs to.
+
+For fail-closed setups: ALSO alert on the agent-side ("scan timed out from
+your-agent-name"). The SDK emits this via the standard logging facility; route
+to your alert pipeline.
+
+## Detecting it from the verdict
+
+When `fail_open` returns the synthesized ALLOW, your code can still react:
+
+```python
+verdict = client.scan(...)
+if "GATEWAY_UNREACHABLE" in verdict.reason_codes:
+    # Interven was down; the ALLOW is synthesized
+    if action_is_irrecoverable(method, url, body):
+        raise BlockedLocallyError("Refusing to proceed without policy enforcement")
+    else:
+        log.warning("Fail-open ALLOW; proceeding")
+    proceed_with_upstream(...)
+```
+
+This pattern — local-default-deny on irrecoverable actions, default-allow elsewhere
+— gives you the best of both modes.
+
+## What we recommend
+
+If you're starting fresh and undecided, default your **agent's "dangerous tool"
+paths to fail-closed**, and everything else to fail-open. The split is roughly:
+
+- DELETE, terminate, transfer, refund, share-external, force-push — **fail-closed**
+- READ, SELECT, list, get — fail-open
+
+Tag actions in your code with their fail-mode and route the scan through one of
+two pre-configured `Client` instances.

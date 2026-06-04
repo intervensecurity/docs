@@ -1,0 +1,223 @@
+---
+title: Policy DSL Reference
+description: Complete reference for the Interven policy language — every match key, condition, action, and combinator.
+---
+
+The Interven policy language is a JSON / YAML DSL. Each policy has a name and one
+or more rules; each rule has a `match`, `condition`, `action`, and `priority`.
+
+This page is the authoritative reference. For the conceptual primer + common
+recipes, see [Policies](/docs/policies).
+
+## Structure
+
+```json
+{
+  "name": "policy name (unique per env)",
+  "description": "free text",
+  "env_names": ["production"],        // optional; omit = applies to all envs
+  "rules": [
+    {
+      "rule_id": "stable-id-for-audit",
+      "priority": 10,
+      "match": { /* match keys */ },
+      "condition": { /* conditions */ },
+      "action": "ALLOW | DENY | SANITIZE | REQUIRE_APPROVAL | OPEN_INCIDENT"
+    }
+  ]
+}
+```
+
+## Match keys
+
+`match` says which scans the rule applies to. Empty `{}` = every scan. All keys
+are ANDed together; multi-value fields are ORed within themselves.
+
+| Key | Type | Example |
+|-----|------|---------|
+| `tool_name` | string | `"slack"`, `"github"`, `"custom_proxy"` |
+| `tool_names` | string[] | `["slack", "discord", "teams"]` |
+| `operations` | string[] | `["create_pr"]`, `["method:POST"]`, `["category:issues"]`, `["*"]` |
+| `verbs` | string[] | `["READ"]`, `["WRITE", "ADMIN"]` |
+| `agent_ids` | UUID[] | Limit to specific agents |
+| `agent_runtime_types` | string[] | `["langchain", "langgraph"]` |
+| `org_patterns` | string[] | GitHub-style `["acme/*"]` |
+| `repo_patterns` | string[] | `["my-org/secrets-*"]` |
+| `channel_patterns` | string[] | Slack `["#alerts*", "#prod-*"]` |
+| `region_patterns` | string[] | AWS `["us-*"]`, `["eu-*"]` |
+| `account_patterns` | string[] | AWS `["12345*"]` |
+| `aws_tags` | object | `{"Environment": "prod"}` — all must match |
+| `principal_patterns` | string[] | `["@gmail.com$"]`, `["*@external.example"]` |
+| `methods` | string[] | `["POST", "DELETE"]` (HTTP verbs, raw) |
+| `url_patterns` | string[] | URL prefix or glob (`["https://api.slack.com/*"]`) |
+
+### Operation reference
+
+The `operations` array accepts three forms:
+
+| Form | Meaning | Example |
+|------|---------|---------|
+| Bare op name | Exact match | `"create_pr"`, `"post_message"` |
+| `category:X` | All ops in a category | `"category:issues"`, `"category:write"` |
+| `method:X` | All ops with this HTTP verb | `"method:POST"`, `"method:DELETE"` |
+| `*` | All operations for the tool | Useful with `tool_name` |
+
+Available categories per tool are in the [Tools catalog](/docs/tools).
+
+## Conditions
+
+`condition` says *when* a matched scan triggers the rule. Empty `{}` = always.
+All keys are ANDed.
+
+| Key | Type | Use case |
+|-----|------|----------|
+| `has_data_class` | string[] | Body matches a classifier — `["SECRETS"]`, `["PII"]`, `["PHI"]`, `["INTERNAL"]` |
+| `body_contains_any` | string[] | Body text has ANY of these substrings (case-insensitive) |
+| `body_contains_all` | string[] | Body has EVERY substring |
+| `body_path_equals` | object | JSON-path-style: `{"path": "$.amount", "value": 0}` |
+| `body_path_gt` / `_gte` / `_lt` / `_lte` | object | Numeric: `{"path": "$.amount", "value": 10000}` |
+| `body_size_bytes_gt` | number | Request body size threshold |
+| `is_external_principal` | bool | True if the action targets an entity outside your org |
+| `is_new_destination` | bool | First time this agent has touched this resource |
+| `is_volume_burst` | bool | Burst detector: ≥5× normal rate in last 10 min |
+| `risk_score_gt` | number | 0.0–1.0 — combine with other rules for tiered actions |
+| `trust_score_lt` | number | Agent trust below threshold (default 0.6) |
+| `threat_intel_match` | bool | URL or IP matched one of the 6 feeds |
+| `daily_budget_exceeded` | string | Named budget that has gone over its day's allocation |
+| `time_of_day_outside` | object | `{"start": "09:00", "end": "18:00", "tz": "Asia/Dubai"}` — true outside the window |
+
+### `body_path_*` examples
+
+For body content like `{"amount": 14500, "recipient": "..."}`:
+
+```json
+{
+  "body_path_gt": { "path": "$.amount", "value": 10000 }
+}
+```
+
+The path syntax is JSONPath subset: `$.field`, `$.nested.field`, `$.items[*].field`.
+
+### Combining conditions
+
+```json
+{
+  "condition": {
+    "has_data_class": ["PII"],
+    "is_external_principal": true,
+    "trust_score_lt": 0.7
+  }
+}
+```
+
+All three must be true for the rule to fire. There's no top-level OR in the DSL —
+use multiple rules with the same action instead.
+
+## Actions
+
+| Action | Effect |
+|--------|--------|
+| `ALLOW` | Forward to the upstream. Trace logged as ALLOW. |
+| `DENY` | Block. Trace logged. Reason codes from the rule + classifier. |
+| `SANITIZE` | Run the classifier's redaction pass + forward the redacted body. Trace logged as SANITIZE. |
+| `REQUIRE_APPROVAL` | Pause the agent; create an approval record. See [Approvals](/docs/console/approvals). |
+| `OPEN_INCIDENT` | Same as DENY plus auto-open an incident. Use for critical-severity policies. |
+
+You can chain side effects with action modifiers (optional fields next to `action`):
+
+| Modifier | Effect |
+|----------|--------|
+| `escalate_to` | `"slack"`, `"discord"`, etc. — force-notify even if the channel's default filter wouldn't include this event |
+| `tag` | `"tagname"` — adds a tag to the trace for later filtering |
+| `incident_severity` | `LOW` / `MEDIUM` / `HIGH` / `CRITICAL` — used by `OPEN_INCIDENT` |
+| `reason_code` | Override the default reason code with a custom string (visible in Activity) |
+
+## Priority & precedence
+
+Within a single policy: lower priority number wins (priority 10 evaluates before
+priority 20).
+
+Across policies: each policy's matching rules are collected, then strictness
+escalates. DENY beats SANITIZE beats REQUIRE_APPROVAL beats ALLOW. So if any
+matching rule says DENY, the decision is DENY — regardless of priority.
+
+`OPEN_INCIDENT` is treated as DENY for decision purposes plus the incident side
+effect.
+
+## Wildcards & globs
+
+- **Globs** in `*_patterns` fields use shell-glob syntax: `*` matches anything,
+  `?` matches one char, `[abc]` matches a set.
+- **Regex** is NOT supported; if you need it, use `body_contains_any` with
+  multiple substrings or split into multiple rules.
+- **Case-insensitive** matching is the default for body text; case-sensitive for
+  URLs and identifiers.
+
+## Versioning & idempotency
+
+`POST /v1/policies/apply` is idempotent on `name + env_name`. Re-applying the
+same policy creates a new `policy_version` row (audit trail preserved) but the
+active policy with that name in that environment gets the latest config.
+
+To roll back: re-apply the old version's JSON. Or use the Console's
+"Version history → Restore" button.
+
+## Example: full healthcare HIPAA pack rule
+
+```json
+{
+  "name": "P-HIPAA-1: Deny PHI egress to chat",
+  "env_names": ["production"],
+  "rules": [
+    {
+      "rule_id": "phi-egress-chat-deny",
+      "priority": 10,
+      "match": {
+        "tool_names": ["slack", "discord", "teams"],
+        "operations": ["post_message", "send_message"]
+      },
+      "condition": {
+        "has_data_class": ["PHI"]
+      },
+      "action": "DENY",
+      "reason_code": "PHI_EGRESS_CHAT_BLOCKED"
+    }
+  ]
+}
+```
+
+## Validating policies offline
+
+```bash
+npm i -g @interven/policy-cli
+
+interven-policy validate policies/*.yaml
+# -> reports any DSL errors before you push
+```
+
+CI integration: add `interven-policy validate` to your linter step.
+
+## YAML vs JSON
+
+The DSL accepts either. YAML is recommended for git-tracked policies:
+
+```yaml
+name: "P-HIPAA-1: Deny PHI egress to chat"
+env_names: ["production"]
+rules:
+  - rule_id: phi-egress-chat-deny
+    priority: 10
+    match:
+      tool_names: [slack, discord, teams]
+      operations: [post_message, send_message]
+    condition:
+      has_data_class: [PHI]
+    action: DENY
+    reason_code: PHI_EGRESS_CHAT_BLOCKED
+```
+
+## See also
+
+- [Policies primer + recipes](/docs/policies)
+- [Starter policy packs](https://github.com/intervensecurity/aif/tree/main/packages/policy-packs)
+- [Risk signals — what feeds risk_score_gt](/docs/reference/risk-signals)

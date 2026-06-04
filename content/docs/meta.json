@@ -4,16 +4,23 @@
     "index",
     "quickstart",
     "concepts",
+    "console",
     "tools",
     "integrations",
     "saas-agents",
     "alerts",
     "ephemeral-keys",
     "policies",
+    "admin",
     "api-reference",
+    "reference",
     "self-host",
     "compliance",
     "troubleshooting",
+    "fail-open-vs-closed",
+    "migration",
+    "changelog",
+    "glossary",
     "fintech-quickstart"
   ]
 }

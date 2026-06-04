@@ -1,0 +1,129 @@
+---
+title: Rate Limits & Quotas
+description: Per-tenant rate limits, monthly scan quotas, body size limits, and how to monitor + request increases.
+---
+
+Interven enforces three independent limits:
+
+1. **Monthly scan quota** — your plan's total scans per billing period (see
+   [Billing](/docs/admin/billing))
+2. **Per-tenant rate limit** — bursts per minute, smoothed against spikes
+3. **Per-request body size** — max payload Interven will inspect
+
+## Limits at a glance
+
+| Limit | Free | Solo | Team | Pro | Enterprise |
+|-------|------|------|------|-----|------------|
+| Scans / month | 1,000 | 50,000 | 200,000 | 1,000,000 | Per contract |
+| Rate limit (per min) | 60 | 600 | 2,000 | 10,000 | Per contract |
+| Body size per request | 256 KB | 256 KB | 256 KB | 1 MB | Per contract |
+
+## What happens when you hit each
+
+### Monthly quota — `429 QUOTA_EXCEEDED`
+
+After 100% of your plan's monthly scans:
+
+- New scans return HTTP 429 with `reason: QUOTA_EXCEEDED`
+- We do NOT run policy + risk on these calls (we wouldn't be enforcing anything
+  to bill you for)
+- The block log is visible in Activity (filter by `reason=QUOTA_EXCEEDED`)
+- Resets at the start of your next billing period
+
+Mitigations:
+
+- Upgrade plan
+- Enable [overage billing](/docs/admin/billing#what-happens-at-100-of-quota)
+  (off by default)
+- Wait for monthly reset
+
+### Per-tenant rate — `429 RATE_LIMITED`
+
+Sustained excess of your rate limit:
+
+- Calls return HTTP 429 with `reason: RATE_LIMITED`
+- Includes a `Retry-After` header (seconds)
+- Standard SDKs auto-retry with exponential backoff
+
+Most spikes are absorbed silently — the rate limiter is a token-bucket with burst
+capacity equal to ~2× the steady rate. You only see 429s if you sustain the burst
+past the bucket window.
+
+### Body too large — `413 PAYLOAD_TOO_LARGE`
+
+If a single scan body exceeds your plan's limit:
+
+- Returns HTTP 413 with the actual size in the response
+- The scan is not run (we don't load oversized bodies into memory)
+- Common cause: agent dumping an entire file into a Slack message body, or a
+  prompt with embedded multi-MB context
+
+Mitigations:
+
+- Truncate or chunk on your side before scanning
+- For Pro: 1 MB ceiling covers most agent traffic
+- For Enterprise: request a custom limit (we'll tune `MAX_BODY_BYTES` for you)
+
+## Monitoring
+
+### Console
+- **Dashboard → Usage** shows scans-this-period + rate-limit-hits-24h
+- **Activity** lets you filter by `reason=RATE_LIMITED` or `reason=QUOTA_EXCEEDED`
+- **Billing → Usage** shows day-by-day quota burn
+
+### API
+```bash
+curl -H "Authorization: Bearer iv_live_..." \
+  https://api.intervensecurity.com/v1/usage
+```
+
+Returns:
+
+```json
+{
+  "period_start": "2026-06-01T00:00:00Z",
+  "period_end":   "2026-07-01T00:00:00Z",
+  "scans_used":   23847,
+  "scans_limit":  200000,
+  "rate_limit_hits_24h": 0,
+  "current_rate_per_min": 12,
+  "forecast_period_total": 187500
+}
+```
+
+### Alerts
+You can add a custom alert when usage crosses a threshold:
+
+- **Settings → Alerts → Add usage alert**
+- Trigger: scans-used ≥ 80% / 90% / 100%
+- Channels: Slack / Email / SIEM webhook
+
+## Requesting an increase
+
+Self-serve: upgrade your plan (Console → Settings → Billing).
+
+If your plan tier already meets your needs except for one specific limit (e.g. you
+need 5 MB bodies on Pro, or 100k/min rate on Team), email sales@intervensecurity.com
+with:
+
+- Your tenant ID
+- Which limit, what value you need
+- Why (specific traffic pattern — helps us size correctly)
+
+We can usually accommodate non-standard limits within a few business days, often
+without moving you to Enterprise.
+
+## What's NOT rate-limited
+
+- Per-key reads (just listing, telemetry queries from the Console) — these are
+  free of the scan rate limit
+- Approval polls — `GET /v1/approvals/{id}/status` does not count against your
+  scan quota
+- Webhook deliveries from Interven *to* your channels (Slack, Discord, SIEM) —
+  these are governed by the destination's own rate limits, not ours
+
+## Per-key rate limits (custom)
+
+For tenants that need to enforce rate limits per API key (not just per tenant) —
+typical for SaaS products that mint a key per customer — Enterprise contracts
+include configurable per-key buckets. Contact sales to enable.
