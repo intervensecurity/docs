@@ -48,13 +48,25 @@ vice-versa. Check the SDK reference for your language.
 
 ### Clean URLs returning `REQUIRE_APPROVAL`
 
-Agent's trust score has degraded after repeated denies. Either reset it in
-Console → Agents → "Reset trust" or, self-hosted:
+Agent's trust score has degraded after repeated denies. Reset it via:
 
-```sql
-UPDATE agent_trust_state SET trust_score = 1.0, scrutiny_until = NULL
-WHERE agent_id = '<your-uuid>';
-```
+- **Console** → Agents → that agent → **Reset Trust** (appears when trust < 1.0)
+- **API**: `POST /api/telemetry/agents/{agent_id}/trust/reset`
+- **Self-hosted DB-direct fallback** (only if Console is unreachable):
+
+  ```sql
+  UPDATE agent_trust_state
+  SET trust_score = 1.0,
+      scrutiny_until = NULL,
+      high_risk_count_1h = 0,
+      critical_count_24h = 0,
+      ti_match_count_24h = 0,
+      semantic_match_count_24h = 0,
+      deny_count_24h = 0,
+      approval_count_24h = 0,
+      updated_at = now()
+  WHERE agent_id = '<your-uuid>';
+  ```
 
 ### `SANITIZE` returned but no `sanitized_body`
 

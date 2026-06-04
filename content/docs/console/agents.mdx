@@ -34,10 +34,14 @@ Click any agent to open its full profile:
 - API key prefix (never the full key)
 
 ### Trust score panel
-- Current score with trend line over the last 30 days
-- Last 5 events that moved the score (deny, approval, threat-intel hit, clean streak)
-- **Reset trust** button — sets score back to 1.0 and clears scrutiny window
-- **Set custom scrutiny** — manually pin trust low for a quarantine window
+- Current score with trend line
+- **Reset Trust** button — sets score back to 1.0 and zeros all 24h counters
+  (deny / approval / high-risk / threat-intel / semantic / critical). Available
+  whenever trust < 1.0; hidden for suspended agents (reactivate first).
+- **Suspend Agent / Reactivate Agent** — operator-level kill switch.
+  Suspended agents deny every request; reactivating clears the suspension but
+  preserves trust counters (use Reset Trust separately if you also want trust
+  back at 1.0).
 
 ### Activity panel
 - Calls / hour over last 24h with decision color-banding
@@ -93,7 +97,9 @@ See the [API reference](/docs/api-reference#post-v1scan) for the request schema.
 
 ## API access
 
-- `GET /v1/agents` — list agents with filters
-- `GET /v1/agents/{agent_id}` — single agent
-- `POST /v1/agents/{agent_id}/trust/reset` — reset trust to 1.0
-- `POST /v1/agents/{agent_id}/scrutiny` — set custom scrutiny window
+- `GET /api/telemetry/agents` — list agents
+- `GET /api/telemetry/agents/trust-states` — current trust state per agent
+- `POST /api/telemetry/agents/{agent_id}/trust/reset` — reset trust to 1.0 and clear counters
+- `POST /api/telemetry/agents/{agent_id}/suspend` — suspend (deny-all)
+- `POST /api/telemetry/agents/{agent_id}/reactivate` — undo suspension
+- `DELETE /api/telemetry/agents/{agent_id}` — remove agent + cascade related rows
