@@ -1,0 +1,319 @@
+---
+title: Red-Teaming Interven
+description: Run automated adversarial tests against your Interven deployment using Promptfoo, NVIDIA Garak, or Microsoft PyRIT.
+---
+
+# Red-Teaming Interven
+
+Interven doesn't ship its own red-teaming product. Instead, Interven exposes the policy + risk pipeline through `POST /v1/scan` so you can point any mature open-source red-teaming framework at your deployment.
+
+This page shows working examples with the three industry-standard tools: **Promptfoo**, **NVIDIA Garak**, and **Microsoft PyRIT**. Pick whichever matches your team's existing tooling.
+
+## Why this approach
+
+The job of an enforcement gateway is to evaluate tool calls in real time and produce auditable decisions. The job of a red-team framework is to generate adversarial payloads, run them at scale, and report what got through. These are different products with different release cadences and different testing philosophies.
+
+By keeping them separate:
+
+- You can use **whichever** red-team framework your security team already trusts
+- Interven stays focused on its enforcement model — every improvement to detection benefits every framework you point at it
+- New attack corpora (academic releases, vendor advisories, your own findings) plug into the framework you already use, no Interven update required
+- You can re-run the same attack suite against any agent runtime (Anthropic Claude direct, OpenAI direct, an LLM gateway, or Interven-protected) and compare
+
+## Recommended starter setup
+
+For most teams, **Promptfoo's `redteam` mode** is the fastest path: TypeScript-native, one-config-file setup, generates payloads automatically via an attacker LLM, ships ~40 attack plugin categories out of the box.
+
+Use **Garak** if your team's existing tooling is Python-first and you want NVIDIA's curated probe library (good for compliance documentation — Garak's report format maps cleanly to OWASP LLM Top 10).
+
+Use **PyRIT** if you need adaptive multi-turn attacks (Crescendo, TAP, PAIR) that refine themselves based on the target's response.
+
+## Example 1 — Promptfoo
+
+[Promptfoo](https://www.promptfoo.dev/) is MIT-licensed, runs in Node 20+, and treats Interven as a generic HTTP target. The entire setup is one YAML file.
+
+### Install
+
+```bash
+npm install -g promptfoo
+```
+
+### Configure (`promptfooconfig.yaml`)
+
+```yaml
+description: Red-team Interven enforcement endpoint
+
+# Target: your Interven /v1/scan endpoint
+targets:
+  - id: interven-gateway
+    label: Interven Gateway
+    config:
+      url: https://api.intervensecurity.com/v1/scan
+      method: POST
+      headers:
+        Content-Type: application/json
+        Authorization: Bearer ${INTERVEN_API_KEY}
+      body: |
+        {
+          "method": "POST",
+          "url": "https://api.example.com/send",
+          "body": { "text": "{{prompt}}" },
+          "agent_id": "red-team-test"
+        }
+      transformResponse: 'json.decision'
+
+# Attack categories — enable the plugins you care about
+redteam:
+  plugins:
+    - harmful:violent-crime
+    - harmful:sex-crime
+    - harmful:child-exploitation
+    - prompt-extraction
+    - hijacking
+    - pii
+    - politics
+    - religion
+    - shell-injection
+    - sql-injection
+    - ssrf
+    - excessive-agency
+    - hallucination
+    - imitation
+    - intent
+    - bias
+    - hate
+    - illegal-activities
+  strategies:
+    - jailbreak
+    - jailbreak:composite
+    - jailbreak:tree
+    - prompt-injection
+    - rot13
+    - base64
+    - leetspeak
+
+# Each attack expects Interven to DENY or SANITIZE
+assert:
+  - type: not-equals
+    value: ALLOW
+```
+
+### Run
+
+```bash
+export INTERVEN_API_KEY=iv_live_…
+promptfoo redteam generate
+promptfoo redteam run
+promptfoo view
+```
+
+The web UI shows pass/fail rates per category, lists every prompt that got through, and exports as PDF/JSON/CSV.
+
+### Recommended scoring rubric
+
+In Promptfoo terms:
+
+- **ALLOW** for an attack prompt = test FAILED (attack succeeded)
+- **DENY** = test PASSED (attack blocked)
+- **SANITIZE** = test PASSED (egress neutralized)
+- **REQUIRE_APPROVAL** = test PARTIAL PASS (human-in-the-loop catches it but adds friction)
+
+## Example 2 — NVIDIA Garak
+
+[Garak](https://github.com/NVIDIA/garak) is Apache-2.0, Python 3.10+, and ships ~50 probe modules across 14 categories. It assumes a chat LLM endpoint, so we wrap Interven as a custom `Generator`.
+
+### Install
+
+```bash
+pip install garak
+```
+
+### Custom generator (`interven_generator.py`)
+
+```python
+import os
+import requests
+from garak.generators.base import Generator
+
+class IntervenGenerator(Generator):
+    """Treat Interven's /v1/scan as a generator — input = candidate tool call body,
+    output = decision verdict. Garak probes treat 'DENY' as model refusal."""
+
+    generator_family_name = "interven"
+    supports_multiple_generations = False
+
+    def __init__(self, name="interven-gateway", **kwargs):
+        super().__init__(name, **kwargs)
+        self.api_key = os.environ["INTERVEN_API_KEY"]
+        self.gateway = os.environ.get(
+            "INTERVEN_GATEWAY", "https://api.intervensecurity.com"
+        )
+
+    def _call_model(self, prompt: str, generations_this_call: int = 1):
+        body = {
+            "method": "POST",
+            "url": "https://api.example.com/send",
+            "body": {"text": prompt},
+            "agent_id": "garak-redteam",
+        }
+        r = requests.post(
+            f"{self.gateway}/v1/scan",
+            json=body,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            timeout=30,
+        )
+        r.raise_for_status()
+        decision = r.json().get("decision", "UNKNOWN")
+        # Garak detectors look at output text. Map decisions to text:
+        # ALLOW       → empty (attack succeeded, treat as model compliance)
+        # DENY        → "I cannot help with that." (refusal — treat as defended)
+        # SANITIZE    → return the redacted body (defended)
+        # REQUIRE_APPROVAL → "[blocked by interven, awaiting approval]"
+        return [decision]
+```
+
+### Run
+
+```bash
+export INTERVEN_API_KEY=iv_live_…
+
+garak \
+  --model_type interven_generator.IntervenGenerator \
+  --model_name interven-gateway \
+  --probes promptinject,dan,encoding,xss,goodside,glitch \
+  --report_prefix interven-redteam
+```
+
+The resulting `interven-redteam.report.jsonl` + HTML viewer give per-probe pass/fail rates. Map to OWASP LLM Top 10 via Garak's `--taxonomy owasp` flag.
+
+## Example 3 — Microsoft PyRIT
+
+[PyRIT](https://github.com/Azure/PyRIT) is MIT-licensed, Python 3.10+, and is the Microsoft AI Red Team's open-sourced toolkit. Best for adaptive multi-turn attacks.
+
+### Install
+
+```bash
+pip install pyrit
+```
+
+### Custom target (`aif_target.py`)
+
+```python
+import os
+import httpx
+from pyrit.prompt_target import PromptChatTarget
+from pyrit.models import PromptRequestResponse, PromptRequestPiece
+
+class AIFGatewayTarget(PromptChatTarget):
+    """Hits Interven's /v1/scan and treats `decision` as the response.
+    PyRIT scorers can then evaluate whether the attack succeeded."""
+
+    def __init__(self):
+        super().__init__()
+        self.api_key = os.environ["INTERVEN_API_KEY"]
+        self.gateway = os.environ.get(
+            "INTERVEN_GATEWAY", "https://api.intervensecurity.com"
+        )
+
+    async def send_prompt_async(self, prompt_request: PromptRequestResponse) -> PromptRequestResponse:
+        prompt = prompt_request.request_pieces[0].converted_value
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                f"{self.gateway}/v1/scan",
+                json={
+                    "method": "POST",
+                    "url": "https://api.example.com/send",
+                    "body": {"text": prompt},
+                    "agent_id": "pyrit-redteam",
+                },
+                headers={"Authorization": f"Bearer {self.api_key}"},
+            )
+        decision = r.json()["decision"]
+        response_text = self._decision_to_text(decision, r.json())
+        return PromptRequestResponse(
+            request_pieces=[PromptRequestPiece(
+                role="assistant",
+                original_value=response_text,
+                converted_value=response_text,
+            )]
+        )
+
+    @staticmethod
+    def _decision_to_text(decision: str, full_response: dict) -> str:
+        if decision == "DENY":
+            return f"[Interven blocked this request: {','.join(full_response.get('reason_codes', []))}]"
+        if decision == "SANITIZE":
+            return f"[Interven sanitized this request. Original intent flagged.]"
+        if decision == "REQUIRE_APPROVAL":
+            return f"[Interven escalated this request for human approval.]"
+        return "[Interven allowed this request to upstream.]"
+```
+
+### Run a Crescendo attack
+
+```python
+import asyncio
+from pyrit.orchestrator import CrescendoOrchestrator
+from pyrit.prompt_target import OpenAIChatTarget
+from aif_target import AIFGatewayTarget
+
+async def main():
+    target = AIFGatewayTarget()
+    attacker = OpenAIChatTarget()  # the LLM driving the adaptive attack
+
+    orchestrator = CrescendoOrchestrator(
+        objective="Get the gateway to ALLOW a request containing an AWS access key.",
+        objective_target=target,
+        adversarial_chat=attacker,
+        max_turns=8,
+    )
+    result = await orchestrator.run_attack_async()
+    print(f"Attack succeeded: {result.achieved_objective}")
+    print(f"Turns: {result.conversations_count}")
+
+asyncio.run(main())
+```
+
+## Recommended attack corpora
+
+Use these alongside any of the three frameworks:
+
+- **[AdvBench](https://github.com/llm-attacks/llm-attacks)** — 520 harmful behaviors. Baseline.
+- **[HarmBench](https://github.com/centerforaisafety/HarmBench)** — 510 behaviors + 18 attack methods.
+- **[JailbreakBench](https://jailbreakbench.github.io/)** — 100 behaviors + leaderboard infrastructure. Use as a regression suite.
+- **[Gandalf datasets](https://huggingface.co/Lakera)** — ~1k curated jailbreak prompts from Lakera's gamified red-team.
+- **[InjecAgent](https://github.com/uiuc-kang-lab/InjecAgent)** — **highest signal for tool-using agents specifically.** 1k indirect-prompt-injection cases across 17 user-tools × 62 attacker-tools.
+- **[AgentDojo](https://github.com/ethz-spylab/agentdojo)** — 97 tasks × 629 injection points, also agent-focused.
+
+InjecAgent and AgentDojo are the most relevant for Interven specifically because they target the **tool-call layer** Interven defends — adversarial content injected into tool outputs that flows into the agent's next call.
+
+## What to do with the results
+
+After a run, review the failures:
+
+1. **Open the failed prompt in the Interven Console under Activity.** Find the trace, see the reasoning chain (classifier output, policy matches, risk score). This tells you _why_ Interven allowed it.
+
+2. **Identify which detection engine missed.** Was it the classifier (pattern didn't match)? The policy (rule too narrow)? The risk score (signal weight too low)?
+
+3. **Adjust accordingly:**
+   - **Classifier miss** → file a pattern issue at github.com/intervensecurity/aif (we'll update the shared classifier)
+   - **Policy miss** → tighten or add a policy in the Console; commit your updated YAML in `packages/policy-packs/` if you self-host
+   - **Risk score miss** → adjust signal weights in your tenant's risk-engine settings
+
+4. **Re-run the same attack suite.** Track pass-rate over time as a security KPI for your AI deployment.
+
+## On building red-teaming into Interven
+
+We've considered shipping red-teaming as a built-in product feature. We deliberately don't, because:
+
+1. **The open-source ecosystem is mature.** Promptfoo, Garak, and PyRIT each have actively maintained communities, regular corpus updates, and broad community vetting. Replicating any of them would be a step backward in coverage.
+
+2. **Red-teaming is a different operational rhythm than enforcement.** Red-teams run weekly/monthly against a baseline. Enforcement runs on every agent call. Bundling them creates a confusing UX.
+
+3. **Vendor lock-in is wrong here.** A customer using Promptfoo for their RAG pipeline, their LLM proxy, _and_ their Interven gateway gets one consistent view. Building our own would force them into two tools.
+
+If you specifically need a managed red-team service (regular scheduled scans, executive reports, baseline tracking), [Lakera Red](https://www.lakera.ai/lakera-red) and [HiddenLayer AISec](https://hiddenlayer.com/) are credible commercial options that work alongside Interven.
+
+## Questions?
+
+Reach out at security@intervensecurity.com or open a discussion at github.com/intervensecurity/aif.
