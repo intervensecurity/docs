@@ -58,7 +58,7 @@ during customer conversations; Interven evaluates each call before forwarding.
 ## Caveats
 
 - Decagon's timeout for external calls is typically tight (5–15s depending on
-  your plan). Interven adds <100ms in normal operation but can spike on threat-intel
+  your plan). Interven adds &lt;100ms in normal operation but can spike on threat-intel
   cold lookups — tune `THREAT_INTEL_TIMEOUT_MS` if needed.
 - One inbound route per upstream service is cleaner than a catch-all for policy
   attribution.
