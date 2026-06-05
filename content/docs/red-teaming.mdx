@@ -296,8 +296,8 @@ After a run, review the failures:
 2. **Identify which detection engine missed.** Was it the classifier (pattern didn't match)? The policy (rule too narrow)? The risk score (signal weight too low)?
 
 3. **Adjust accordingly:**
-   - **Classifier miss** → file a pattern issue at github.com/intervensecurity/aif (we'll update the shared classifier)
-   - **Policy miss** → tighten or add a policy in the Console; commit your updated YAML in `packages/policy-packs/` if you self-host
+   - **Classifier miss** → email [support@intervensecurity.com](mailto:support@intervensecurity.com) with the failing pattern; we update the shared classifier on a rolling cadence
+   - **Policy miss** → tighten or add a policy in the Console; the change applies to every gateway your tenant uses
    - **Risk score miss** → adjust signal weights in your tenant's risk-engine settings
 
 4. **Re-run the same attack suite.** Track pass-rate over time as a security KPI for your AI deployment.
@@ -316,4 +316,5 @@ If you specifically need a managed red-team service (regular scheduled scans, ex
 
 ## Questions?
 
-Reach out at security@intervensecurity.com or open a discussion at github.com/intervensecurity/aif.
+Reach out at [security@intervensecurity.com](mailto:security@intervensecurity.com)
+or [support@intervensecurity.com](mailto:support@intervensecurity.com).

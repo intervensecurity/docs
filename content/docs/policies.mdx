@@ -83,8 +83,9 @@ INTERVEN_API_KEY=iv_live_... \
   interven-policy apply policies/*.yaml --env production
 ```
 
-Production-grade templates (HIPAA, SOC2, PCI-DSS, GDPR) and the 7 starter packs live at
-[`packages/policy-packs/`](https://github.com/intervensecurity/aif/tree/main/packages/policy-packs).
+Production-grade templates (HIPAA, SOC2, PCI-DSS, GDPR) and 8 starter packs
+ship with every tenant. Apply via Console → Policies → Add Pack, or use the
+`@interven/policy-cli` npm package to apply YAML files from CI/CD.
 
 ## Applying via API
 
@@ -153,5 +154,5 @@ npx -y @interven/policy-cli apply \
   --env production
 ```
 
-Source for all packs lives at
-[`packages/policy-packs/`](https://github.com/intervensecurity/aif/tree/main/packages/policy-packs).
+All packs ship with every tenant — apply via Console → Policies → Add Pack
+or via the `@interven/policy-cli` npm package.
