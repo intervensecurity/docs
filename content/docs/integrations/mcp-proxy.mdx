@@ -1,0 +1,305 @@
+---
+title: MCP Downstream-Proxy
+description: Register a downstream MCP server, inspect its tools for drift / injection / capability mismatch, and policy-gate every tools/call.
+---
+
+# MCP downstream-proxy mode
+
+When your agent talks to a third-party MCP server (postmark-mcp,
+Slack-MCP, a vendor MCP, an internal MCP server), put Interven
+transparently in between. Every `tools/list` runs through the **B7
+inspector**; every `tools/call` is **policy-gated** by the inspector's
+reason codes.
+
+This catches the **postmark-mcp class** of supply-chain attack: a
+legitimate npm-distributed MCP server gets a malicious update that
+silently adds a `bcc` parameter to one of its tools to exfiltrate every
+email an agent sends. The inspector flags the new param as
+`MCP_RISKY_PARAM_ADDED` and denies (or requires approval) per your
+policy.
+
+## Setup
+
+### Step 1 — Register the downstream server
+
+```bash
+curl -X POST https://api.intervensecurity.com/v1/mcp/servers \
+  -H "Authorization: Bearer iv_live_xxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url_or_path": "https://mcp.postmark.com/jsonrpc",
+    "transport": "streamable_http",
+    "declared_domains": ["email_send"],
+    "trust_mode": "tofu"
+  }'
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "server": {
+    "id": "f1d70a76-46c5-4cf9-a48d-6ecb94afbb6e",
+    "url_or_path": "https://mcp.postmark.com/jsonrpc",
+    "transport": "streamable_http",
+    "declared_domains": ["email_send"],
+    "trust_mode": "tofu"
+  }
+}
+```
+
+Save the `server.id` — you'll use it in every subsequent call.
+
+You can also register via Console → **MCP Servers** → **Register MCP
+server** (form with the same fields).
+
+### Step 2 — Point your agent at the proxy
+
+Replace the agent's direct connection with Interven's proxy URLs:
+
+```text
+# Before (agent → server directly)
+POST https://mcp.postmark.com/jsonrpc
+Body: { jsonrpc, id, method: "tools/list", params: {} }
+
+# After (agent → Interven → server)
+POST https://api.intervensecurity.com/v1/mcp/proxy/<server_id>/tools-list
+Authorization: Bearer iv_live_xxxx
+Body: {}
+```
+
+`tools/call` is similar:
+
+```bash
+curl -X POST https://api.intervensecurity.com/v1/mcp/proxy/<server_id>/tools-call \
+  -H "Authorization: Bearer iv_live_xxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "send_email",
+      "arguments": { "to": "alice@example.com", "subject": "...", "body": "..." }
+    }
+  }'
+```
+
+### Step 3 — Approve baselines
+
+The first time `tools/list` runs against a fresh registration, each
+tool becomes a `state=pending` baseline. The inspector returns
+`decision=REQUIRE_APPROVAL` and the response includes the per-tool
+descriptors so a reviewer can vet them.
+
+Console → MCP Servers → click the server → for each pending baseline:
+
+- **Canonical descriptor** preview shows the full JSON descriptor
+- **Approve** promotes to `state=approved`
+- **Reject** marks the tool as `state=rejected`
+
+After approval, subsequent inspections compare against the approved
+version. Any drift (hash change, new params, semantic change, etc.)
+fires the appropriate `MCP_*` reason code.
+
+## Trust modes
+
+| Mode | Behavior |
+|------|----------|
+| `tofu` (Trust On First Use, default) | First inspection sets baseline; future ones compare. Origin pinning NOT enforced. |
+| `pinned` | First inspection captures TLS SPKI hash (HTTPS) or binary SHA-256 (stdio); future calls enforce match. |
+| `strict` | Pinned + any drift = DENY (no REQUIRE_APPROVAL fallback). |
+
+## Transport support
+
+| Transport | Status | Notes |
+|-----------|--------|-------|
+| `streamable_http` | ✅ Full | HTTP POST with JSON body. Recommended for most use cases. |
+| `sse` | ✅ One-shot | Server-Sent Events with framed JSON-RPC. Streamed multi-chunk responses return only the first matching frame. |
+| `stdio` | ✅ Allowlisted | Spawns local binary via Node `child_process`. Requires `MCP_STDIO_ALLOWED_PATHS` env. |
+
+### stdio allowlist
+
+stdio is the highest-risk transport — without controls, an attacker
+who could register MCP servers could ask Interven to spawn arbitrary
+local binaries. The proxy enforces a hard allowlist:
+
+```bash
+# infra/.env on the gateway
+MCP_STDIO_ALLOWED_PATHS=/usr/local/bin/mcp-postmark:/opt/internal/mcp-server
+```
+
+Servers registered with `transport=stdio` and a `url_or_path` NOT in
+the allowlist get rejected with HTTP 403 at every call.
+
+## The 8 detection signals
+
+| Signal | Tier | Reason code | What triggers it |
+|--------|------|-------------|------------------|
+| S1 | in-gateway | `MCP_TOOL_DRIFT` | Canonical-JSON SHA-256 of descriptor != approved baseline |
+| S3 | in-gateway | `MCP_INJECTION_HEURISTIC` | Regex pre-filter (system-prompt-leak / role-override / invisible chars) |
+| S3 | ML sidecar | `MCP_INJECTION_CLASSIFIER` | DeBERTa-v3 prompt-injection score ≥ 0.85 |
+| S4 | in-gateway | `MCP_TOOL_ADDED` / `MCP_TOOL_REMOVED` | Tool set diff |
+| S6 | in-gateway | `MCP_ORIGIN_CHANGE` | Pinned origin (TLS SPKI or stdio binary hash) mismatch — only fires when `trust_mode != 'tofu'` |
+| S7 | in-gateway | `MCP_RISKY_PARAM_ADDED` | New parameter named `token` / `password` / `bcc` / `webhook` / `url` / etc. (full list in `mcpInspector.ts`) |
+| S2 | ML sidecar | `MCP_SEMANTIC_DRIFT_HIGH` (< 0.85) or `_MEDIUM` (< 0.95) | Cosine similarity of MiniLM embedding |
+| S5 | ML sidecar | `MCP_CAPABILITY_MISMATCH` | Zero-shot classifier's top label not in registration's `declared_domains` |
+
+The 5 in-gateway signals always fire (no external dependency). The 3
+ML signals require the [`ml-inference` sidecar](#enabling-the-ml-sidecar) —
+without it the inspector degrades gracefully and you get 5-of-8.
+
+## Policy DSL operators
+
+Any policy targeting `tool_name: mcp` can gate on inspector reason codes:
+
+```yaml
+- name: "Block tools/call on drifted MCP servers"
+  description: |
+    If the inspector flagged tool drift, set drift, risky params, or any
+    drift signal at all on this server, deny any tools/call routed through
+    the proxy.
+  compliance_tags:
+    - "OWASP_LLM:LLM03_SUPPLY_CHAIN"
+    - "OWASP_LLM:LLM05_IMPROPER_OUTPUT_HANDLING"
+    - "MITRE_ATLAS:AML.T0051.001_PROMPT_INJECTION_INDIRECT"
+    - "ISO_42001:A.10.1_THIRD_PARTY_AI_SUPPLIERS"
+  rules:
+    - rule_id: mcp-drift-deny
+      match:
+        tools: [mcp]
+      condition:
+        mcp_drift_detected: true
+      action: DENY
+```
+
+DSL keys (all booleans, all default to "not constrained"):
+
+| Key | True when… |
+|-----|------------|
+| `mcp_drift_detected: true` | Any of MCP_TOOL_DRIFT / TOOL_ADDED / TOOL_REMOVED / RISKY_PARAM_ADDED |
+| `mcp_origin_changed: true` | MCP_ORIGIN_CHANGE |
+| `mcp_injection_heuristic: true` | MCP_INJECTION_HEURISTIC |
+| `mcp_risky_param_added: true` | MCP_RISKY_PARAM_ADDED |
+
+Drop the [`mcp-hardening.yaml`](https://github.com/intervensecurity/aif/blob/main/packages/policy-packs/mcp-hardening.yaml)
+starter pack for ready-made rules covering all four DSL operators.
+
+## Enabling the ML sidecar
+
+The 3 expensive transformer-based signals (S2 semantic-drift, S3
+classifier, S5 capability-mismatch) live in a separate Python sidecar
+that the gateway HTTP-calls when needed. Bring it up:
+
+```bash
+# In infra/
+docker compose --profile ml up --build -d
+
+# One-time model download (~700MB; takes a few minutes on first run)
+docker compose --profile ml exec ml-inference python -m src.download_models
+
+# Tell the gateway where the sidecar lives
+echo 'ML_INFERENCE_URL=http://ml-inference:8090' >> .env
+echo 'ML_INFERENCE_TIMEOUT_MS=2000' >> .env
+docker compose --profile ml restart gateway
+```
+
+The sidecar exposes `/embed`, `/inject_score`, and `/zero_shot`. All
+calls from the gateway are fail-soft — sidecar down = inspector
+gracefully falls back to the 5 in-gateway signals.
+
+Without the sidecar:
+- S1 / S3-regex / S4 / S6 / S7 still fire
+- S2 / S3-classifier / S5 silently skipped
+
+## REQUIRE_APPROVAL flow on the proxy
+
+When policy returns `REQUIRE_APPROVAL` on a `tools/call`:
+
+1. The proxy persists a redacted copy of the request into the
+   `approvals` table (1-hour TTL)
+2. Returns HTTP 202 with `{ error, approval_id, reason_codes, mcp_reason_codes }`
+3. Console → Approvals surfaces the pending request to admins
+4. The alert dispatcher fires (any Slack / Discord / Teams / Telegram /
+   webhook subscriber with `event_types` including `MCP_DRIFT`)
+
+If approved, the agent can retry the call with the same payload — the
+inspector reads back the most-recent inspection result, sees the
+approval, and lets the call through.
+
+## Required env vars
+
+```bash
+# Gateway (always required to use any of the MCP inspector features)
+INTERVEN_MCP_INSPECTOR=true
+
+# Optional — wire ML sidecar
+ML_INFERENCE_URL=http://ml-inference:8090
+ML_INFERENCE_TIMEOUT_MS=2000
+
+# Required only for stdio transport
+MCP_STDIO_ALLOWED_PATHS=/usr/local/bin/mcp-postmark:/opt/internal/mcp
+
+# Optional tuning (thresholds for the ML signals)
+MCP_INJECTION_CLASSIFIER_THRESHOLD=0.85
+MCP_SEMANTIC_DRIFT_HIGH_THRESHOLD=0.85
+MCP_SEMANTIC_DRIFT_MED_THRESHOLD=0.95
+```
+
+## SDK helpers
+
+Python:
+
+```python
+from aif_sdk import McpProxyClient
+
+proxy = McpProxyClient(
+    gateway_url="https://api.intervensecurity.com",
+    api_key="iv_live_xxxx",
+)
+
+# Register once
+server = proxy.register_server(
+    url_or_path="https://mcp.postmark.com/jsonrpc",
+    transport="streamable_http",
+    declared_domains=["email_send"],
+)
+
+# Proxy
+tools = proxy.tools_list(server["server"]["id"])
+result = proxy.tools_call(
+    server["server"]["id"],
+    tool_name="send_email",
+    arguments={"to": "alice@example.com", "subject": "test", "body": "..."},
+)
+```
+
+TypeScript:
+
+```typescript
+import { registerMcpServer, mcpProxyToolsList, mcpProxyToolsCall } from '@aif/sdk';
+
+const { server } = await registerMcpServer(GATEWAY_URL, API_KEY, {
+  url_or_path: 'https://mcp.postmark.com/jsonrpc',
+  transport: 'streamable_http',
+  declared_domains: ['email_send'],
+});
+
+const tools = await mcpProxyToolsList(GATEWAY_URL, API_KEY, server.id);
+const result = await mcpProxyToolsCall(GATEWAY_URL, API_KEY, server.id, {
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'tools/call',
+  params: { name: 'send_email', arguments: { /* ... */ } },
+});
+```
+
+## Endpoints reference
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| POST | `/v1/mcp/servers` | Bearer iv_live_* | Register / update a downstream server |
+| POST | `/v1/mcp/proxy/:server_id/tools-list` | Bearer iv_live_* | Fetch + inspect upstream tools/list |
+| POST | `/v1/mcp/proxy/:server_id/tools-call` | Bearer iv_live_* | Policy-gated forward of a tools/call |
+| POST | `/v1/mcp/inspect` | Bearer `INTERVEN_INTERNAL_SECRET` (admin) | Run inspector against a tools/list payload you already have (offline / CI usage) |

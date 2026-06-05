@@ -5,6 +5,81 @@ description: What's new in Interven — gateway, SDKs, Console, integrations.
 
 Material changes to the product. Behind-the-scenes refactors aren't listed.
 
+## v0.7.0 — June 2026
+
+A large surface expansion across seven build tracks (B1–B7), all
+feature-flag-gated so existing customer traffic is unaffected unless an
+operator opts in.
+
+### Highlights
+
+- **DLP confidence bands** — secrets classifier now emits LOW / MEDIUM /
+  HIGH confidence per match using a 200-character proximity-keyword window.
+  New policy DSL operator `has_data_class_min_confidence: 'HIGH'` lets you
+  DENY only on high-confidence leaks and reduce documentation false positives.
+  Flag: `INTERVEN_DLP_CONFIDENCE_ENABLED`.
+- **4 new threat-intel feeds** — SSLBL, MalwareBazaar, MalShare, CISA KEV.
+  Total now 10 feeds. Admin UI at `/admin/threat-intel-feeds` shows per-feed
+  health + a Run-now button. Flag: `INTERVEN_THREAT_INTEL_FEEDS_V2`.
+- **Compliance taxonomy** — every policy can carry `compliance_tags` from 8
+  frameworks (OWASP LLM, NIST AI RMF, MITRE ATLAS, HIPAA, PCI DSS, GDPR,
+  SOC 2, ISO 42001). All seven starter packs pre-tagged. Coverage matrix at
+  `/compliance/coverage`. See [Compliance Mapping](/docs/compliance-mapping).
+- **Community threat intel** — DENY decisions contribute anonymized indicators
+  to a cross-tenant pool. After 3 distinct tenants flag the same indicator,
+  it's promoted and every tenant benefits. Privacy-safe (secrets shared only
+  as `pattern_class:short_hash`). Per-tenant opt-out. See
+  [Community Intel](/docs/community-intel). Flag: `INTERVEN_COMMUNITY_INTEL`.
+- **AI-SPM Posture dashboard** — 6 continuously-evaluated rules
+  (ghost agents, missing IP allowlists, low-trust agents, stale key rotation,
+  recent DENY storms, no policy coverage) with score + ack/resolve workflow
+  at `/posture`. Hourly cron. See [Posture](/docs/console/posture).
+  Flag: `INTERVEN_POSTURE_DASHBOARD`.
+- **MCP impersonation detection (B7)** — full downstream-proxy mode for
+  third-party MCP servers. 8 detection signals: hash drift, set drift, schema
+  drift, origin pinning, regex prompt-injection + 3 transformer-based signals
+  from a new Python ML sidecar (semantic drift, DeBERTa injection classifier,
+  zero-shot capability mismatch). Per-tool baseline approval workflow. 4 new
+  policy DSL operators. New `mcp-hardening.yaml` starter pack. See
+  [MCP downstream-proxy](/docs/integrations/mcp-proxy) and
+  [MCP Servers](/docs/console/mcp-servers). Flag: `INTERVEN_MCP_INSPECTOR`.
+- **MCP transports** — `streamable_http`, `sse` (one-shot), and `stdio`
+  (allowlisted via `MCP_STDIO_ALLOWED_PATHS`) all supported in proxy mode.
+- **Production AWS forwarder** — `forwardAws` now actually signs with SigV4.
+  Previously sent a stub Bearer token.
+- **MCP REQUIRE_APPROVAL workflow** — proxy `tools/call` now writes an
+  `approvals` row and fires the alert dispatcher when policy returns
+  REQUIRE_APPROVAL, so human reviewers see pending requests.
+- **pgvector for baseline embeddings** — Postgres image switched to
+  `pgvector/pgvector:pg17`. Baseline MiniLM embeddings persisted to skip
+  sidecar calls on every inspection.
+- **Retention sweeps** for the 4 new tables in `retentionPrune.ts`.
+- **SDK updates** — TypeScript: `registerMcpServer`/`mcpProxyToolsList`/
+  `mcpProxyToolsCall` helpers. Python: `McpProxyClient` with full proxy +
+  offline-inspect API.
+- **Admin UI fixes** — tenant delete, signup delete, Threat Intel Feeds
+  page actually populates (legacy feeds now write run records).
+
+### New database migrations
+
+| # | Purpose |
+|---|---------|
+| `034_threat_intel_feed_meta.sql` | Feed-run telemetry table |
+| `035_policy_compliance.sql` | `policies.compliance_tags` denormalized column + GIN index |
+| `036_community_intel.sql` | `community_threat_indicators` + per-tenant opt-out |
+| `037_posture_findings.sql` | Posture findings table + open-finding unique partial index |
+| `038_mcp_baselines.sql` | Three MCP tables (registrations, baselines, inspection events) |
+| `039_mcp_baseline_embeddings.sql` | pgvector extension + `vector(384)` embedding column |
+
+### Operational
+
+- New `ml-inference` Python sidecar (FastAPI + ONNX runtime + 3 transformer
+  models, ~3GB image). Brought up via `docker compose --profile ml up` and
+  one-time `python -m src.download_models` for ~700MB of model weights.
+- Mini-PC backup script at `infra/scripts/backup-mini-pc.sh` pulls
+  `pg_dump` from the VPS nightly with daily/weekly/monthly rotation.
+  Full restore runbook at `infra/scripts/RESTORE.md`.
+
 ## v0.6.0 — June 2026
 
 ### Highlights

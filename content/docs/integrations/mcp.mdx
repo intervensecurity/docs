@@ -95,3 +95,27 @@ The guard exposes two tools to the LLM:
 | **DENY** | Returns error content with reason codes |
 | **SANITIZE** | Rewrites tool arguments with redacted values |
 | **REQUIRE_APPROVAL** | Returns message with approval ID; blocks until approved |
+
+---
+
+## Alternative: downstream-proxy mode (B7)
+
+If your agent is already configured to talk to a third-party MCP server
+(postmark-mcp, Slack-MCP, internal MCP servers, etc.), you can have
+Interven sit transparently between the agent and that server — every
+`tools/list` runs through the **B7 inspector** (8 detection signals
+covering tool drift, set drift, prompt injection, semantic drift,
+capability mismatch, origin tampering, risky parameter injection), and
+every `tools/call` is **policy-gated** with the inspector's reason codes
+available to your policy DSL via `mcp_*` operators.
+
+See the [dedicated MCP downstream-proxy guide](./mcp-proxy) for
+the full setup, including the ML sidecar for semantic-drift and
+prompt-injection-classifier signals.
+
+Pick the right mode:
+
+| You want… | Use |
+|-----------|-----|
+| Quick-start: gate ANY tool an MCP client offers (Claude Desktop, Cursor) | `@interven/mcp-guard` (above) |
+| Protect a SPECIFIC downstream MCP server with deep inspection + drift detection | [downstream-proxy mode](./mcp-proxy) |

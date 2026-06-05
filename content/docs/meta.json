@@ -11,6 +11,8 @@
     "alerts",
     "ephemeral-keys",
     "policies",
+    "compliance-mapping",
+    "community-intel",
     "admin",
     "api-reference",
     "reference",

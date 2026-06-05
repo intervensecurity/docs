@@ -1,0 +1,122 @@
+---
+title: Community Threat Intel
+description: How Interven's privacy-safe cross-tenant intel works, what gets shared, and how to opt out.
+---
+
+# Community Threat Intel
+
+When one Interven tenant denies a request because of a malicious URL,
+domain, IP, file hash, or known-bad secret pattern, that indicator can
+be anonymized and shared with every other tenant — but only after at
+least three different tenants have independently flagged it. This means
+your first DENY contributes to the network, and after a few
+contributions, you get the benefit back as someone else's DENY protects
+you preemptively.
+
+This is opt-in by default on free / solo / team plans and opt-out by
+default on enterprise (per DPA template).
+
+## What gets shared
+
+Only the **indicator**, never the request content:
+
+| Type | What's stored | When raw value becomes visible to others |
+|------|---------------|------------------------------------------|
+| `url` | Full URL | After 3 distinct tenants have flagged it |
+| `domain` | Hostname only | After 3 distinct tenants |
+| `ip` | IPv4/IPv6 address | After 3 distinct tenants |
+| `sha256` | File hash | After 3 distinct tenants |
+| `secret_pattern` | `pattern_class:first_16_hex_of_sha256(value)` | After 3 distinct tenants — **raw secret value NEVER shared** |
+
+Until promotion (3-tenant gate), only the SHA-256 hash of the indicator
+is in the cross-tenant table. Your tenant's contribution can't be
+reverse-engineered back to the URL/IP/etc. that triggered your DENY.
+
+## What's never shared
+
+- Request body content
+- PII matches (emails, phone numbers, MRNs, SSNs, etc.)
+- Tenant identity in promoted indicators (the contributing tenant list is
+  not exposed in the read path — only the indicator and its tenant count)
+- Approval workflow content
+- Policy DSL or matched rule details
+- Agent names / API keys / credentials
+
+## Promotion mechanics
+
+The flow:
+
+1. Tenant A denies a request to `http://exfil.evil.com/data`
+2. Aggregator computes SHA-256 of the URL, upserts into
+   `community_threat_indicators` with `tenant_count=1`, `promoted=false`,
+   `indicator_value=NULL`
+3. Tenant A's UUID is appended to `contributing_tenants[]`
+4. Three days later, Tenant B denies the same URL. The same aggregator
+   call sees the existing hash, appends Tenant B's UUID, bumps
+   `tenant_count=2`. Still not promoted.
+5. Tenant C denies it. `tenant_count=3` triggers promotion — `promoted=true`
+   and `indicator_value=http://exfil.evil.com/data` is now populated
+6. Tenant D's gateway reloads its `threat_indicators` cache (60s TTL),
+   pulls promoted community indicators with `source='community'`, treats
+   them as a regular threat-intel hit on its next scan
+
+Once promoted, the indicator behaves identically to a built-in feed
+(URLhaus, ThreatFox, CISA KEV, etc.) for every tenant.
+
+## Privacy invariants enforced in code
+
+- `processDecisionForCommunityIntel()` returns immediately if the
+  tenant has `opt_out_community_intel = TRUE`
+- Localhost / `.local` / `.internal` / RFC1918 hostnames are filtered
+  out of contributions (your private infra never leaks)
+- Only DENY decisions contribute (not ALLOW, SANITIZE, or REQUIRE_APPROVAL)
+- Only HIGH-confidence SECRETS contribute (LOW/MEDIUM filtered to avoid
+  documentation false positives leaking)
+- For SECRETS, the contributed value is `class:hash[:16]` — never the
+  raw secret text
+
+## Opt out
+
+Console → Community Intel → toggle off the "Contributing" switch.
+
+Or directly:
+
+```bash
+curl -X POST https://app.intervensecurity.com/api/community-intel/opt-out \
+  -H "Cookie: aif_session=..." \
+  -H "Content-Type: application/json" \
+  -d '{"opt_out": true}'
+```
+
+Opting out is per-tenant and takes effect immediately. Already-promoted
+indicators stay in the read path (you still benefit from them) — only
+your future contributions stop.
+
+## Enable the system
+
+```bash
+# infra/.env
+INTERVEN_COMMUNITY_INTEL=true
+```
+
+Without this flag the aggregator is a complete no-op — the
+`processDecisionForCommunityIntel()` call returns at the first env
+check, no DB writes, no cross-tenant lookups.
+
+## Watching it work
+
+Console → **Community Intel** page shows:
+
+- Total number of promoted indicators currently in play
+- Your contribution opt-in/out state
+- How promotion works (explainer)
+
+The page reads from `GET /api/community-intel/summary`.
+
+## On the Enterprise DPA
+
+The default DPA template ships with community intel opted **out** for
+Enterprise customers — easier to opt in later than to apologize for an
+unannounced data flow. If you're an Enterprise customer who wants the
+network-effect benefit, ask your account rep to flip the tenant's flag
+in Console settings.

@@ -1,0 +1,106 @@
+---
+title: Compliance Mapping
+description: How Interven policies map to OWASP LLM, NIST AI RMF, MITRE ATLAS, HIPAA, PCI DSS, GDPR, SOC 2, and ISO 42001 controls.
+---
+
+# Compliance Mapping
+
+Every Interven policy can carry `compliance_tags` — a list of
+`FRAMEWORK:CONTROL` strings identifying the control(s) that policy
+helps satisfy. The Console's **Compliance Coverage** page reads these
+tags from all your active policies and renders a per-framework matrix
+so you can see at a glance what's covered and what isn't.
+
+## What "covered" means
+
+A green pill on the matrix means **at least one of your active policies
+is tagged with that control**. It is **not** a certification claim —
+neither Interven nor your tenant is automatically compliant just
+because a control has coverage. The mapping tells you the policy
+contributes to the control's intent; the audit evidence chain still
+needs the rest (workforce training, BAAs, signed access reviews,
+documented risk assessment, etc.).
+
+That said, having one-click answers to *"do you cover §164.312(b)?"*
+during a procurement call is the difference between a confident
+"yes here's the rule and the policy ID" and "let me get back to you."
+
+## Supported frameworks
+
+| Framework | Version | Controls |
+|-----------|---------|----------|
+| **OWASP LLM Top 10** | 2025 | LLM01–LLM10 |
+| **NIST AI RMF** | 1.0 | GOVERN, MAP, MEASURE, MANAGE families |
+| **MITRE ATLAS** | 2024 | Prompt injection (direct + indirect), RAG poisoning, exfiltration via LLM, external harms |
+| **HIPAA Security Rule** | 2013 | §164.308, §164.312(a)/(b)/(c)/(e), §164.314(a), §164.316(b) |
+| **PCI DSS** | 4.0 | 3.4, 3.5, 6.5.1, 6.5.10, 8.3.1 |
+| **EU GDPR** | 2018 | Article 5, 25, 32, 33, 35 |
+| **SOC 2** | 2017 | CC6.1, CC6.6, CC6.7, CC7.2, CC7.3 |
+| **ISO/IEC 42001** | 2023 | A.2.2, A.5.3, A.6.2.4, A.6.2.8, A.7.2, A.8.2, A.10.1 |
+
+Full control list is in `packages/shared/src/complianceTaxonomy.ts` and
+versioned in source. New frameworks/controls land in that single file.
+
+## Tagging a policy
+
+Add `compliance_tags` to your policy pack YAML:
+
+```yaml
+policies:
+  - name: "Sanitize PII before sending email"
+    description: "Auto-redact email/SSN/card numbers from any tool call to email vendors."
+    compliance_tags:
+      - "GDPR:ARTICLE_32_SECURITY_OF_PROCESSING"
+      - "HIPAA:§164.312(e)(1)_TRANSMISSION_SECURITY"
+      - "PCI_DSS:3.4"
+      - "OWASP_LLM:LLM02_INSECURE_OUTPUT_HANDLING"
+      - "SOC_2:CC6.7"
+    rules:
+      - rule_id: pii-sanitize-email
+        match: { tools: [custom_proxy], verbs: [WRITE] }
+        condition:
+          has_data_class: [PII]
+          body_contains_any: ["mailgun", "sendgrid", "smtp"]
+        action: SANITIZE
+```
+
+Tags are validated against the taxonomy at policy save. Invalid tags
+(`FAKE_FRAMEWORK:foo` or `HIPAA:made_up_control`) get rejected.
+
+## Reading the Coverage Matrix
+
+`/compliance/coverage` shows each framework as a row. Click any green
+pill to see which policies contribute to that control.
+
+A control with **0 covering policies** shows greyed out — that's a
+genuine gap. Use it as a worklist when preparing for an audit.
+
+## Pre-tagged starter packs
+
+All seven shipped starter packs carry compliance_tags out of the box:
+
+- **`healthcare-hipaa.yaml`** — HIPAA + GDPR + OWASP LLM + NIST AI RMF + ISO 42001
+- **`enterprise-oem-starter.yaml`** — OWASP LLM + GDPR + PCI DSS + SOC 2 + NIST AI RMF + MITRE ATLAS + ISO 42001
+- **`sre-starter.yaml`** — SOC 2 + OWASP LLM + NIST AI RMF + ISO 42001 + PCI DSS
+- **`vibe-coder-starter.yaml`** — OWASP LLM + PCI DSS + SOC 2 + GDPR + MITRE ATLAS + ISO 42001
+- **`hobbyist-starter.yaml`** — OWASP LLM + PCI DSS + SOC 2 + GDPR
+- **`browser-agent-starter.yaml`** — OWASP LLM + MITRE ATLAS + SOC 2 + PCI DSS + GDPR
+- **`iso-42001.yaml`** — ISO 42001 + OWASP LLM + NIST AI RMF
+- **`mcp-hardening.yaml`** — OWASP LLM + MITRE ATLAS + ISO 42001 + SOC 2 + NIST AI RMF
+
+Applying a pack installs the tags automatically — no further work
+needed unless you author custom policies.
+
+## Programmatic access
+
+```bash
+# List frameworks the gateway knows about
+curl https://app.intervensecurity.com/api/compliance/frameworks \
+  -H "Cookie: aif_session=..."
+
+# Get this tenant's coverage matrix
+curl https://app.intervensecurity.com/api/compliance/coverage \
+  -H "Cookie: aif_session=..."
+```
+
+The response shape is `{ coverage: { FRAMEWORK: { CONTROL: [{policy_id, name}, ...] } } }`.

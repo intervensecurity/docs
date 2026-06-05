@@ -6,6 +6,8 @@
     "agents",
     "approvals",
     "incidents",
+    "posture",
+    "mcp-servers",
     "inbound-routes",
     "api-keys",
     "tool-credentials"

@@ -1,0 +1,133 @@
+---
+title: MCP Servers
+description: Register downstream MCP servers and approve their tool baselines before agents can use them.
+---
+
+# MCP Servers
+
+The **MCP Servers** page (`/mcp-servers` in the Console) is where you
+register the downstream Model Context Protocol servers your agents
+talk to through Interven, approve baselines for each tool, and review
+the inspector's findings.
+
+Interven supports two MCP modes:
+
+1. **AIF-as-MCP-server** (default) — your agent talks to Interven at
+   `/mcp` and Interven runs the tools internally. No registration needed.
+2. **Downstream-proxy mode** (this page) — your agent talks to Interven
+   at `/v1/mcp/proxy/:server_id/...` and Interven forwards to a registered
+   external MCP server, inspecting every `tools/list` and policy-gating
+   every `tools/call`.
+
+This page is for mode 2.
+
+## Registering a server
+
+Click **Register MCP server**, fill in:
+
+| Field | Notes |
+|-------|-------|
+| **URL or stdio path** | `https://mcp.example.com/jsonrpc` for HTTP, `/usr/local/bin/mcp-server` for stdio |
+| **Transport** | `streamable_http` (recommended), `sse`, or `stdio` |
+| **Trust mode** | `tofu` (accept first inspection as baseline), `pinned` (enforce TLS SPKI / binary hash), `strict` (any drift = DENY) |
+| **Declared capability domains** | Comma-separated. Used by S5 capability-mismatch detection — e.g. `weather,calendar` |
+
+Registration is idempotent on `(tenant, url_or_path)`. Re-registering
+the same URL updates the other fields.
+
+## Baseline approval workflow
+
+The first time you fetch `tools/list` from a newly-registered server,
+each declared tool gets written as a **pending** baseline. Pending
+baselines DON'T pass the inspector — they're flagged as `MCP_TOOL_ADDED`
+until you approve them.
+
+Click a server in the list to see its baselines. For each pending
+baseline:
+
+- **Approve** — promotes to `state=approved`. Future inspections compare
+  against this approved version
+- **Reject** — marks `state=rejected`. The server's tools/list will keep
+  raising `MCP_TOOL_ADDED` for this tool until it disappears upstream
+
+Approved baselines store the **canonical JSON descriptor**, its
+**SHA-256 hash**, and (when the ML sidecar is wired) a **384-dim
+sentence-transformers embedding** for fast semantic-drift comparison.
+
+## Inspector signals
+
+Every `tools/list` proxy call runs 8 detection signals against the
+upstream response. Reasons surface in the inspection_events table and
+become available to your policies via the `mcp_*` DSL operators.
+
+| Signal | Tier | Reason code | Catches |
+|--------|------|-------------|---------|
+| S1 | in-gateway | `MCP_TOOL_DRIFT` | Canonical-JSON SHA-256 changed vs baseline |
+| S3 | in-gateway | `MCP_INJECTION_HEURISTIC` | Regex pre-filter for "ignore previous instructions" / invisible chars |
+| S3 | ML sidecar | `MCP_INJECTION_CLASSIFIER` | DeBERTa prompt-injection score ≥ 0.85 |
+| S4 | in-gateway | `MCP_TOOL_ADDED` / `MCP_TOOL_REMOVED` | Tool set diff |
+| S6 | in-gateway | `MCP_ORIGIN_CHANGE` | Pinned TLS SPKI / stdio binary hash mismatch |
+| S7 | in-gateway | `MCP_RISKY_PARAM_ADDED` | New parameter named `token` / `password` / `bcc` / etc. |
+| S2 | ML sidecar | `MCP_SEMANTIC_DRIFT_HIGH` (<0.85) or `_MEDIUM` (<0.95) | Cosine similarity of tool description embedding |
+| S5 | ML sidecar | `MCP_CAPABILITY_MISMATCH` | Zero-shot top label not in declared_domains |
+
+S2/S3-classifier/S5 require the ML inference sidecar (`docker compose
+--profile ml up`). Without it the inspector falls back to 5-of-8 signals
+and degrades gracefully.
+
+## Drift policy per server
+
+Each registration carries a `drift_policy` JSONB controlling what each
+reason code does:
+
+```json
+{
+  "deny_reasons": ["MCP_ORIGIN_CHANGE", "MCP_RISKY_PARAM_ADDED"],
+  "approval_reasons": ["MCP_TOOL_DRIFT", "MCP_INJECTION_HEURISTIC"],
+  "log_only_reasons": []
+}
+```
+
+Defaults when unset:
+
+- DENY: `MCP_ORIGIN_CHANGE`, `MCP_RISKY_PARAM_ADDED`
+- REQUIRE_APPROVAL: `MCP_TOOL_DRIFT`, `MCP_TOOL_ADDED`, `MCP_TOOL_REMOVED`, `MCP_INJECTION_HEURISTIC`
+- (everything else) ALLOW
+
+## Policy DSL
+
+In addition to the inspector decision, the `mcp_*` reason codes are
+available to the policy engine on `tools/call`:
+
+```yaml
+- name: "Deny tools/call on drifted servers"
+  rules:
+    - condition: { mcp_drift_detected: true }
+      action: DENY
+```
+
+DSL keys:
+
+- `mcp_drift_detected: true` — any of MCP_TOOL_DRIFT / ADDED / REMOVED / RISKY_PARAM_ADDED
+- `mcp_origin_changed: true` — MCP_ORIGIN_CHANGE
+- `mcp_injection_heuristic: true` — MCP_INJECTION_HEURISTIC
+- `mcp_risky_param_added: true` — MCP_RISKY_PARAM_ADDED
+
+See the [mcp-hardening starter pack](../policies) for ready-made rules.
+
+## Required env vars
+
+```bash
+# Required to enable the inspector + proxy + this page
+INTERVEN_MCP_INSPECTOR=true
+
+# Optional — wire the ML sidecar for the 3 transformer-based signals
+ML_INFERENCE_URL=http://ml-inference:8090
+ML_INFERENCE_TIMEOUT_MS=2000
+
+# Required only when registering stdio transport servers
+MCP_STDIO_ALLOWED_PATHS=/usr/local/bin/mcp-server-1:/opt/mcp/server-2
+```
+
+The `MCP_STDIO_ALLOWED_PATHS` allowlist is critical for stdio — without
+it the proxy refuses to spawn any stdio binary as a safety guard.

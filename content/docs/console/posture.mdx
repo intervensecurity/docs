@@ -1,0 +1,138 @@
+---
+title: Posture
+description: The Interven AI-SPM posture dashboard — what each rule detects and how to remediate findings.
+---
+
+# Posture
+
+The **Posture** page (`/posture` in the Console) shows your tenant's current
+AI-SPM (AI Security Posture Management) state. Six continuously-evaluated
+rules run on an hourly cron and emit findings that you can acknowledge or
+resolve.
+
+This is **not** the same as Activity (per-request decisions) or Incidents
+(point-in-time security events). Posture rules look at the **standing
+state** of your agents — keys that should be rotated, IP allowlists that
+are missing, dormant agents that still hold credentials.
+
+## Score
+
+The page header shows a **Posture Score** out of 100. The score starts at
+100 and subtracts:
+
+- 20 points per `CRITICAL` open finding
+- 10 points per `HIGH` open finding
+- 5 points per `MEDIUM` open finding
+- 1 point per `LOW` open finding
+
+Acknowledging or resolving a finding restores its score contribution.
+
+## The six built-in rules
+
+### `GHOST_ACCESS` — HIGH
+
+> Agent has not been seen in 30+ days but still has an active API key.
+
+**What it catches:** An agent that was provisioned, ran for a while, then
+went silent — but whose API key is still active. Common in dev → prod
+migrations where the old dev agent never got cleaned up.
+
+**How to remediate:** Either revoke the unused API key (Console → API
+Keys → Revoke) or restart the agent so it generates traffic.
+
+### `NO_IP_ALLOWLIST` — MEDIUM
+
+> Production agent has an API key without an IP allowlist.
+
+**What it catches:** A production-tier agent's API key with no
+`ip_allowlist`. Means the key would still work from any source IP if
+exfiltrated.
+
+**How to remediate:** Console → API Keys → edit the key → add the IP
+ranges your agent runs from (CIDR notation, e.g. `52.0.0.0/8`).
+
+### `LOW_TRUST_SUSTAINED` — HIGH
+
+> Agent trust score < 0.5 sustained for 14+ days.
+
+**What it catches:** An agent whose trust score (from the deterministic
+risk engine) has been below 0.5 for two weeks. Indicates either a
+genuine misbehavior pattern, a compromised credential, or a misconfigured
+agent issuing risky calls.
+
+**How to remediate:** Drill into the agent's Activity to see what's
+driving the low trust. Common causes: repeated DENYs, threat-intel hits,
+unusual volume spikes.
+
+### `KEY_OLD_ROTATION` — MEDIUM
+
+> API key has not been rotated in 180+ days.
+
+**What it catches:** Standard credential-hygiene rule. SOC 2 / PCI / NIST
+recommend ≤180-day rotation cadence.
+
+**How to remediate:** Console → API Keys → Rotate. Interven supports
+graceful rotation with a 7-day overlap window — the old key keeps
+working while you redeploy the new one.
+
+### `DECISIONS_DENIED_RECENT` — HIGH
+
+> Agent has >5 DENY decisions in the last 24 hours.
+
+**What it catches:** An agent banging on policies. Either the agent is
+buggy and trying to do things it shouldn't, or it's compromised and
+under attacker control.
+
+**How to remediate:** Drill into Activity, filter by `decision=DENY`,
+look at the reason codes. If the agent is buggy, fix the agent. If
+compromised, revoke its key immediately.
+
+### `NO_POLICY_COVERAGE` — MEDIUM
+
+> Agent has had decisions in the last 7 days but no policy matched any of them.
+
+**What it catches:** An agent operating completely unconstrained. Every
+decision falls through to the default (ALLOW). Indicates a tenant that
+hasn't authored or applied any policies to this agent yet.
+
+**How to remediate:** Apply a starter pack (`enterprise-oem`,
+`vibe-coder`, etc.) via Console → Policies → Add Pack, or author your
+own policies targeting this agent's tool name.
+
+## Workflow
+
+For each finding, an admin can:
+
+- **Ack** — acknowledge that you've seen it (stops counting against the score)
+- **Resolve** — mark fixed (auto-prunes after 180 days via retention)
+- **Risk accepted** — explicitly accept the risk without remediation
+
+The unique `(tenant, agent, rule) WHERE status='open'` constraint
+guarantees each finding shows up once. Re-running the cron just bumps
+`last_detected` on the open row.
+
+## Enabling the cron
+
+Posture is **off by default**. Flip on:
+
+```bash
+# infra/.env
+INTERVEN_POSTURE_DASHBOARD=true
+POSTURE_SCAN_INTERVAL_MINUTES=60   # optional, defaults to 60
+```
+
+The telemetry service picks this up at boot and starts the hourly scan.
+
+## Adding your own rules
+
+Posture rules live in `services/telemetry/src/postureRules.ts` as a
+TypeScript array of `PostureRule` objects. Each rule provides:
+
+- `id` — UPPER_SNAKE identifier
+- `severity` — `LOW | MEDIUM | HIGH | CRITICAL`
+- `description` — what it detects (human-readable)
+- `evaluate(pool, tenantId)` — returns `Finding[]`
+
+Self-hosted tenants can extend the array; SaaS tenants get the built-in
+six. The cron runs every rule per tenant and upserts findings into
+`posture_findings`.

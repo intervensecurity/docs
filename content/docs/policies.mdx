@@ -47,10 +47,19 @@ takes precedence over an ALLOW rule on the same scan.
 |-----------|------|----------|
 | `is_external_principal` | bool | Catch posts to a personal/external Slack |
 | `has_data_class` | string[] | `["SECRETS"]`, `["PII"]`, `["INTERNAL"]` |
+| `has_data_class_min_confidence` | `"LOW"` &#124; `"MEDIUM"` &#124; `"HIGH"` | B1: fires only if at least one SECRETS match reached this band. Pair with `has_data_class: ["SECRETS"]` to deny only high-confidence leaks. Requires `INTERVEN_DLP_CONFIDENCE_ENABLED=true`. |
 | `body_contains_any` | string[] | Body has ANY of these substrings (case-insensitive) |
 | `body_contains_all` | string[] | Body has EVERY substring |
 | `new_resource` | bool | First time the agent has touched this resource |
 | `volume_burst` | bool | Sudden spike in calls |
+| `mcp_drift_detected` | bool | B7: any MCP_TOOL_DRIFT / TOOL_ADDED / TOOL_REMOVED / RISKY_PARAM_ADDED on the last inspection. See [MCP downstream-proxy](/docs/integrations/mcp-proxy). |
+| `mcp_origin_changed` | bool | B7: MCP_ORIGIN_CHANGE on the last inspection |
+| `mcp_injection_heuristic` | bool | B7: MCP_INJECTION_HEURISTIC on the last inspection |
+| `mcp_risky_param_added` | bool | B7: MCP_RISKY_PARAM_ADDED on the last inspection |
+
+Every policy can also carry a `compliance_tags` field at the policy
+level (not condition level). See [Compliance Mapping](/docs/compliance-mapping)
+for the supported frameworks and tagging guide.
 
 ## Editing in the Console
 

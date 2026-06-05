@@ -10,6 +10,7 @@
     "crewai",
     "openai-assistants",
     "mcp",
+    "mcp-proxy",
     "claude-code",
     "cursor",
     "browser-use",
